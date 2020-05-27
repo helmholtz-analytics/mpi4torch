@@ -44,29 +44,50 @@ void check_mpi_return_value(int ierr)
     }
 }
 
-Tensor MPIAllreduce(const Tensor& input);
-Tensor MPIBcast_(const Tensor& input, int64_t root);
-Tensor MPIReduce_(const Tensor& input, int64_t root);
-Tensor JoinDummies(const Tensor& loopthrough, const variable_list& list);
-variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag);
-variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag);
-Tensor MPIWait(const variable_list& input);
+struct MPI_Comm_Wrapper : torch::CustomClassHolder
+{
+    MPI_Comm_Wrapper(const MPI_Comm comm_ = MPI_COMM_NULL) : comm(comm_) {}
 
-int GetRank()
+    MPI_Comm comm;
+
+    int64_t GetRank();
+    int64_t GetSize();
+
+    Tensor MPIAllreduce(const Tensor& input);
+    Tensor MPIBcast_(const Tensor& input, int64_t root);
+    Tensor MPIReduce_(const Tensor& input, int64_t root);
+    variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag);
+    variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag);
+    Tensor MPIWait(const variable_list& input);
+};
+
+c10::intrusive_ptr<MPI_Comm_Wrapper> comm_world()
+{
+    return c10::make_intrusive<MPI_Comm_Wrapper>(MPI_COMM_WORLD);
+}
+
+Tensor JoinDummies(const Tensor& loopthrough, const variable_list& list);
+
+int64_t MPI_Comm_Wrapper::GetRank()
 {
     int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+    MPI_Comm_rank(comm,&rank);
     return rank;
 }
 
-int GetSize()
+int64_t MPI_Comm_Wrapper::GetSize()
 {
     int size;
-    MPI_Comm_size(MPI_COMM_WORLD,&size);
+    MPI_Comm_size(comm,&size);
     return size;
 }
 
-struct MPIAllreduceBackward : public torch::autograd::Node {
+struct MPIBackwardNode : public torch::autograd::Node
+{
+    MPI_Comm_Wrapper comm;
+};
+
+struct MPIAllreduceBackward : public MPIBackwardNode {
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
         return std::string("MPIAllreduceBackward");
@@ -81,16 +102,17 @@ variable_list MPIAllreduceBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = MPIAllreduce(grads[0]);
+        grad_inputs[0] = comm.MPIAllreduce(grads[0]);
     }
     return grad_inputs;
 }
 
-Tensor MPIAllreduce(const Tensor& input)
+Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input)
 {
     std::shared_ptr<MPIAllreduceBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIAllreduceBackward> (new MPIAllreduceBackward(), torch::autograd::deleteNode);
+        grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -103,7 +125,7 @@ Tensor MPIAllreduce(const Tensor& input)
 
         check_mpi_return_value(
             MPI_Allreduce(input_cont.data_ptr(), recv.data_ptr(), input_cont.numel(),
-                      torch2mpitype(input_cont.scalar_type()), MPI_SUM, MPI_COMM_WORLD)
+                      torch2mpitype(input_cont.scalar_type()), MPI_SUM, comm)
         );
 
         return recv;
@@ -114,7 +136,7 @@ Tensor MPIAllreduce(const Tensor& input)
     return result;
 }
 
-struct MPIBcastInPlaceBackward : public torch::autograd::Node {
+struct MPIBcastInPlaceBackward : public MPIBackwardNode {
     MPIBcastInPlaceBackward(int _root) : root(_root) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
@@ -132,18 +154,19 @@ variable_list MPIBcastInPlaceBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = MPIReduce_(grads[0],root);
+        grad_inputs[0] = comm.MPIReduce_(grads[0],root);
     }
     return grad_inputs;
 }
 
-Tensor MPIBcast_(const Tensor& input, int64_t root)
+Tensor MPI_Comm_Wrapper::MPIBcast_(const Tensor& input, int64_t root)
 {
     // TODO: check for root being in int range
     std::shared_ptr<MPIBcastInPlaceBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIBcastInPlaceBackward> (new MPIBcastInPlaceBackward(static_cast<int>(root)),
                                                      torch::autograd::deleteNode);
+        grad_fn->comm = *this,
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -157,7 +180,7 @@ Tensor MPIBcast_(const Tensor& input, int64_t root)
         check_mpi_return_value(
             MPI_Bcast(input_cont.data_ptr(), input_cont.numel(),
                   torch2mpitype(input_cont.scalar_type()),
-                  static_cast<int>(root), MPI_COMM_WORLD)
+                  static_cast<int>(root), comm)
         );
 
         return input_cont;
@@ -168,7 +191,7 @@ Tensor MPIBcast_(const Tensor& input, int64_t root)
     return result;
 }
 
-struct MPIReduceInPlaceBackward : public torch::autograd::Node {
+struct MPIReduceInPlaceBackward : public MPIBackwardNode {
     MPIReduceInPlaceBackward(int _root) : root(_root) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
@@ -191,7 +214,7 @@ variable_list MPIReduceInPlaceBackward::apply (variable_list&& grads)
         //       since I currently cannot think of any way how a bifurcation could
         //       enter the DAG.
         // TODO: Proof that it is safe!
-        grad_inputs[0] = MPIBcast_(grads[0],root);
+        grad_inputs[0] = comm.MPIBcast_(grads[0],root);
     }
     return grad_inputs;
 }
@@ -206,13 +229,14 @@ struct MPINoInplaceBackward : public torch::autograd::Node {
     }
 };
 
-Tensor MPIReduce_(const Tensor& input, int64_t root)
+Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t root)
 {
     // TODO: check for root being in int range
     std::shared_ptr<MPIReduceInPlaceBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIReduceInPlaceBackward> (new MPIReduceInPlaceBackward(static_cast<int>(root)),
                                                       torch::autograd::deleteNode);
+        grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -223,8 +247,7 @@ Tensor MPIReduce_(const Tensor& input, int64_t root)
         //    such that it can be savely returned from this function.
         auto input_cont = input.contiguous().variable_data();
 
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        const int rank = GetRank();
 
         void* sendbuf = input_cont.data_ptr();
         if (rank == root) {
@@ -235,7 +258,7 @@ Tensor MPIReduce_(const Tensor& input, int64_t root)
 
         check_mpi_return_value(MPI_Reduce(sendbuf, input_cont.data_ptr(), input_cont.numel(),
                                           torch2mpitype(input_cont.scalar_type()),
-                                          MPI_SUM, static_cast<int>(root), MPI_COMM_WORLD));
+                                          MPI_SUM, static_cast<int>(root), comm));
 
         if (rank != root) {
             // We fill the non-root results with zeros to make the function properly behaved.
@@ -325,7 +348,7 @@ enum NonBlockingOp
     Irecv_Op,
 };
 
-struct MPINonBlockingBackward : public torch::autograd::Node {
+struct MPINonBlockingBackward : public MPIBackwardNode {
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
         return std::string("MPINonBlockingBackward");
@@ -337,17 +360,18 @@ variable_list MPINonBlockingBackward::apply(variable_list&& grads)
     variable_list grad_inputs(1);
     // TODO: superfluous check??
     if (should_compute_output(0)) {
-        grad_inputs[0] = MPIWait(grads);
+        grad_inputs[0] = comm.MPIWait(grads);
     }
     return grad_inputs;
 }
 
-variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag)
+variable_list MPI_Comm_Wrapper::MPIIsend(const Tensor& input, int64_t dest, int64_t tag)
 {
     // TODO: check for dest and tag being in int's range
     std::shared_ptr<MPINonBlockingBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPINonBlockingBackward> (new MPINonBlockingBackward(), torch::autograd::deleteNode);
+        grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -360,7 +384,7 @@ variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag)
         MPI_Request req;
         check_mpi_return_value(MPI_Isend(input_cont.data_ptr(), input_cont.numel(),
                   torch2mpitype(input_cont.scalar_type()), static_cast<int>(dest),
-                  static_cast<int>(tag), MPI_COMM_WORLD, &req));
+                  static_cast<int>(tag), comm, &req));
 
         auto ret = torch::empty({5},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
@@ -382,12 +406,13 @@ variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag)
     return result;
 }
 
-variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag)
+variable_list MPI_Comm_Wrapper::MPIIrecv(const Tensor& input, int64_t source, int64_t tag)
 {
     // TODO: check for dest and tag being in int's range
     std::shared_ptr<MPINonBlockingBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPINonBlockingBackward> (new MPINonBlockingBackward(), torch::autograd::deleteNode);
+        grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -399,7 +424,7 @@ variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag)
         MPI_Request req;
         check_mpi_return_value(MPI_Irecv(input_cont.data_ptr(), input_cont.numel(),
                   torch2mpitype(input_cont.scalar_type()), static_cast<int>(source),
-                  static_cast<int>(tag), MPI_COMM_WORLD, &req));
+                  static_cast<int>(tag), comm, &req));
 
         auto ret = torch::empty({5},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
@@ -423,7 +448,7 @@ variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag)
     return result;
 }
 
-struct MPIWaitBackward : public torch::autograd::Node {
+struct MPIWaitBackward : public MPIBackwardNode {
     MPIWaitBackward(NonBlockingOp op, int64_t sourcedest_, int64_t tag_)
         : operation(op), sourcedest(sourcedest_), tag(tag_+10)
     {}
@@ -471,11 +496,11 @@ variable_list MPIWaitBackward::apply(variable_list&& grads)
         case Isend_Op:
             {
             auto buf = next_node->input_metadata(input_nr).zeros_like();
-            return MPIIrecv(JoinDummies(buf,grads), sourcedest, tag);
+            return comm.MPIIrecv(JoinDummies(buf,grads), sourcedest, tag);
             }
         case Irecv_Op:
             {
-            return MPIIsend(grads[0], sourcedest, tag);
+            return comm.MPIIsend(grads[0], sourcedest, tag);
             }
         default:
             throw std::runtime_error("Unsupported NonBlockingOp!");
@@ -484,7 +509,7 @@ variable_list MPIWaitBackward::apply(variable_list&& grads)
     return variable_list();
 }
 
-Tensor MPIWait(const variable_list& input)
+Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
 {
     auto fortran_handle =  static_cast<MPI_Fint>(input[0][0].item<double>());
     MPI_Request req = MPI_Request_f2c(fortran_handle);
@@ -508,6 +533,7 @@ Tensor MPIWait(const variable_list& input)
     std::shared_ptr<MPIWaitBackward> grad_fn;
     if(torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIWaitBackward>(new MPIWaitBackward(operation, sourcedest, tag),torch::autograd::deleteNode);
+        grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
@@ -527,19 +553,37 @@ Tensor MPIWait(const variable_list& input)
 
 }
 
+// New-style API is more similar to pybind11, and will in the future be:
+static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torchmpi", "MPI_Comm_Wrapper")
+    .def("GetRank", &MPI_Comm_Wrapper::GetRank)
+    .def("GetSize", &MPI_Comm_Wrapper::GetSize)
+    .def("Allreduce", &MPI_Comm_Wrapper::MPIAllreduce)
+    .def("Bcast_", &MPI_Comm_Wrapper::MPIBcast_)
+    .def("Reduce_", &MPI_Comm_Wrapper::MPIReduce_)
+    .def("Isend", &MPI_Comm_Wrapper::MPIIsend)
+    .def("Irecv", &MPI_Comm_Wrapper::MPIIrecv)
+    .def("Wait", &MPI_Comm_Wrapper::MPIWait)
+    .def_pickle([](const c10::intrusive_ptr<MPI_Comm_Wrapper>& self) -> std::string
+        {
+            if (self->comm != MPI_COMM_WORLD) {
+                throw std::runtime_error("MPI communicators other than MPI_COMM_WORLD are not serializable!");
+            }
+            return std::string("MPI_COMM_WORLD");
+        },
+        [](std::string input) -> c10::intrusive_ptr<MPI_Comm_Wrapper>
+        {
+            if (input == std::string("MPI_COMM_WORLD")) {
+                throw std::runtime_error("Unknown MPI communicator");
+            }
+            return c10::make_intrusive<MPI_Comm_Wrapper>(MPI_COMM_WORLD);
+        }
+    )
+;
+
 // Old-style registration API until pytorch 1.4.0 is
 static auto registry = torch::RegisterOperators()
-    .op("torchmpi::MPIAllreduce", &MPIAllreduce)
-    .op("torchmpi::MPIBcast_", &MPIBcast_)
-    .op("torchmpi::MPIReduce_", &MPIReduce_)
-    .op("torchmpi::JoinDummies", &JoinDummies)
-    .op("torchmpi::MPIIsend", &MPIIsend)
-    .op("torchmpi::MPIIrecv", &MPIIrecv)
-    .op("torchmpi::MPIWait", &MPIWait);
-
-// New-style API is more similar to pybind11, and will in the future be:
-// static auto registry = torch::import("torchmpi")
-//     .def("MPIAllreduce", &MPIAllreduce);
+    .op("torchmpi::COMM_WORLD", &comm_world)
+    .op("torchmpi::JoinDummies", &JoinDummies);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // There are some issues with older versions of OpenMPI which have difficulties with dlopen-ing these
@@ -554,9 +598,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // [1] https://github.com/open-mpi/ompi/issues/3705
     m.import("mpi4py.MPI");
 
-    m.def("GetRank", &GetRank, "Return current rank");
-    m.def("GetSize", &GetSize, "Return world communicator size");
 
-    m.def("MPIAllreduce", &MPIAllreduce, "AD-able variant of MPIAllreduce");
+    m.def("comm_world", []() { return MPI_Comm_Wrapper(MPI_COMM_WORLD); }, "Get MPI_COMM_WORLD");
+    //m.def("GetRank", &GetRank, "Return current rank");
+    //m.def("GetSize", &GetSize, "Return world communicator size");
+
+    //m.def("MPIAllreduce", &MPIAllreduce, "AD-able variant of MPIAllreduce");
 }
 

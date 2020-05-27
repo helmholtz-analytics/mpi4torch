@@ -1,26 +1,24 @@
 import torch
 from . import _mpi
 
-rank = _mpi.GetRank()
-npes = _mpi.GetSize()
+class MPI_Comm_Pywrapper:
+    def __init__(self,comm):
+        self._comm = comm
 
-def Allreduce(tensor):
-    return torch.ops.torchmpi.MPIAllreduce(tensor)
+    @property
+    def rank(self):
+        return self._comm.GetRank()
 
-def Bcast_(tensor, root):
-    return torch.ops.torchmpi.MPIBcast_(tensor, root)
+    @property
+    def size(self):
+        return self._comm.GetSize()
 
-def Reduce_(tensor, root):
-    return torch.ops.torchmpi.MPIReduce_(tensor, root)
+    def __getattr__(self, attrName):
+        if attrName in self.__dict__["_comm"]._method_names():
+            return self.__dict__["_comm"].__getattr__(attrName)
+        return self.__dict__[attrName]
+
+COMM_WORLD = MPI_Comm_Pywrapper(torch.ops.torchmpi.COMM_WORLD())
 
 def JoinDummies(tensor, *args):
-    return torch.ops.torchmpi.JoinDummies(tensor,args)
-
-def Isend(tensor, dest, tag):
-    return torch.ops.torchmpi.MPIIsend(tensor, dest, tag)
-
-def Irecv(tensor, dest, tag):
-    return torch.ops.torchmpi.MPIIrecv(tensor, dest, tag)
-
-def Wait(req):
-    return torch.ops.torchmpi.MPIWait(req)
+    return torch.ops.torchmpi.JoinDummies(tensor, args)
