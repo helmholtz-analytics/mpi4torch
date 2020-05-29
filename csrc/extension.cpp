@@ -398,8 +398,6 @@ variable_list MPI_Comm_Wrapper::MPIIsend(const Tensor& input, int64_t dest, int6
 
         auto ret = torch::empty({5},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
-        std::cout << "[MPI_Isend," << GetRank() << "] dest: " << dest
-            << " Handle: " << fortran_handle << "\n";
         ret[0] = static_cast<double>(fortran_handle);
         ret[1] = static_cast<double>(Isend_Op);
         ret[2] = static_cast<double>(dest);
@@ -438,10 +436,6 @@ variable_list MPI_Comm_Wrapper::MPIIrecv(const Tensor& input, int64_t source, in
 
         auto ret = torch::empty({5},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
-        std::cout << "[MPI_Irecv," << GetRank() << "] source: " << source
-            << " Handle: " << fortran_handle
-            << " Receive Buffer: " << input_cont.data_ptr()
-            << " Original Buffer: " << input.data_ptr() << "\n";
         ret[0] = static_cast<double>(fortran_handle);
         ret[1] = static_cast<double>(Irecv_Op);
         ret[2] = static_cast<double>(source);
@@ -536,10 +530,6 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
         throw std::runtime_error(oss.str());
     }
 
-    std::cout << "[MPI_Wait," << GetRank() << "] sourcedest: " << sourcedest
-        << " Handle:" << fortran_handle
-        << " Buffer:" << input[1].data_ptr() << "\n";
-
     std::shared_ptr<MPIWaitBackward> grad_fn;
     if(torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIWaitBackward>(new MPIWaitBackward(operation, sourcedest, tag),torch::autograd::deleteNode);
@@ -551,7 +541,6 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
 
         MPI_Status status; // TODO: Handle use cases for MPI_Status
         check_mpi_return_value(MPI_Wait(&req, & status));
-        std::cout << "Return of MPIWait:" << input[1][0] << " handle: " << fortran_handle << "\n";
         // return a shallow copy of the second input tensor without the autograd strings attached
         return input[1].variable_data();
     })();
