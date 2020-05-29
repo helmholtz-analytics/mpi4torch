@@ -11,6 +11,15 @@ class TestAllreduce(unittest.TestCase):
         res.sum().backward()
         self.assertTrue((tmp.grad == comm.size * torch.ones(10, dtype=torch.double)).all())
 
+    def test_torchscript(self):
+        tmp = torch.rand(10, dtype=torch.double).requires_grad_()
+        @torch.jit.script
+        def myfunc(x,comm_: torchmpi.MPI_Communicator):
+            return comm_.Allreduce(x)
+        res = myfunc(tmp,comm)
+        res.sum().backward()
+        self.assertTrue((tmp.grad == comm.size * torch.ones(10, dtype=torch.double)).all())
+
 class TestReduce(unittest.TestCase):
     def test_simple_inplace(self):
         tmp = torch.rand(10, dtype=torch.double).requires_grad_()
