@@ -596,12 +596,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     //
     // [1] https://github.com/open-mpi/ompi/issues/3705
     m.import("mpi4py.MPI");
-
-
-    m.def("comm_world", []() { return MPI_Comm_Wrapper(MPI_COMM_WORLD); }, "Get MPI_COMM_WORLD");
-    //m.def("GetRank", &GetRank, "Return current rank");
-    //m.def("GetSize", &GetSize, "Return world communicator size");
-
-    //m.def("MPIAllreduce", &MPIAllreduce, "AD-able variant of MPIAllreduce");
 }
 
