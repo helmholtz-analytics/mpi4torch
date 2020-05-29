@@ -24,6 +24,16 @@ MPI_Datatype torch2mpitype(ScalarType in)
 {
     switch(in)
     {
+    case ScalarType::Byte:
+        return MPI_BYTE;
+    case ScalarType::Char:
+        return MPI_CHAR;
+    case ScalarType::Short:
+        return MPI_SHORT;
+    case ScalarType::Int:
+        return MPI_INT;
+    case ScalarType::Long:
+        return MPI_LONG;
     case ScalarType::Float:
         return MPI_FLOAT;
     case ScalarType::Double:
