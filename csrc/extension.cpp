@@ -70,6 +70,7 @@ struct MPI_Comm_Wrapper : torch::CustomClassHolder
     Tensor MPIGather(const Tensor& input, int64_t gatheraxis, int64_t root);
     Tensor MPIAllgather(const Tensor& input, int64_t gatheraxis);
     Tensor MPIScatter(const Tensor& input, int64_t scatteraxis, int64_t numelem, int64_t root);
+    Tensor MPIAlltoall(const Tensor& input, int64_t gatheraxis, int64_t scatteraxis, int64_t numelem);
 
     variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag);
     variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag);
@@ -707,6 +708,71 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
     return result;
 }
 
+struct MPIAlltoallBackward : public MPIBackwardNode {
+    MPIAlltoallBackward(int64_t _gatheraxis, int64_t _scatteraxis)
+        : gatheraxis(_gatheraxis), scatteraxis(_scatteraxis) {}
+    variable_list apply(variable_list&& grads) override;
+    std::string name() const override {
+        return std::string("MPIAlltoallBackward");
+    }
+
+    void release_variables() override {
+        return;
+    }
+
+    int64_t gatheraxis;
+    int64_t scatteraxis;
+};
+
+variable_list MPIAlltoallBackward::apply (variable_list&& grads)
+{
+    variable_list grad_inputs(1);
+    // TODO: for these simple functions the should_compute_output check is superfluous
+    if (should_compute_output(0)) {
+        auto next_node = next_edge(0).function;
+        auto input_nr = next_edge(0).input_nr;
+        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        grad_inputs[0] = comm.MPIAlltoall(grads[0], scatteraxis, gatheraxis, numelem);
+    }
+    return grad_inputs;
+}
+
+Tensor MPI_Comm_Wrapper::MPIAlltoall(const Tensor& input, int64_t gatheraxis, int64_t scatteraxis, int64_t numelem)
+{
+    // TODO: check for root being in int range
+    std::shared_ptr<MPIAlltoallBackward> grad_fn;
+    if (torch::autograd::compute_requires_grad(input)) {
+        grad_fn = std::shared_ptr<MPIAlltoallBackward>
+            (new MPIAlltoallBackward(gatheraxis, scatteraxis),
+             torch::autograd::deleteNode);
+        grad_fn->comm = *this;
+        grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
+    }
+    auto result = ([&]() {
+        at::AutoNonVariableTypeMode non_var_type_mode(true);
+
+        // 1. Make input contiguous
+        auto input_cont = input.contiguous();
+
+
+        // TODO: This is probably not the best solution latency-wise, but the total number
+        //       of bytes sent should match roughly a solution that uses Alltoallw.
+        //       If the latency turns out to become a problem, we should switch to Alltoallw.
+        //       Memory usage could also become an issue, since this solution requires
+        //       temporarily twice the memory that an Alltoallw solution would require.
+        std::vector<torch::Tensor> scattered_tensors;
+        for(int64_t root = 0; root < GetSize(); ++root) {
+            scattered_tensors.emplace_back(MPIScatter(input_cont, scatteraxis, numelem, root));
+        }
+
+        return at::cat(scattered_tensors, gatheraxis);
+    })();
+    if (grad_fn) {
+        set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
+    }
+    return result;
+}
+
 struct JoinDummiesBackward : public torch::autograd::Node {
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
@@ -976,6 +1042,7 @@ static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torch
     .def("Gather", &MPI_Comm_Wrapper::MPIGather)
     .def("Allgather", &MPI_Comm_Wrapper::MPIAllgather)
     .def("Scatter", &MPI_Comm_Wrapper::MPIScatter)
+    .def("Alltoall", &MPI_Comm_Wrapper::MPIAlltoall)
     .def("Isend", &MPI_Comm_Wrapper::MPIIsend)
     .def("Irecv", &MPI_Comm_Wrapper::MPIIrecv)
     .def("Wait", &MPI_Comm_Wrapper::MPIWait)

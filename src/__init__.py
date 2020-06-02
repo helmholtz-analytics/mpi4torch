@@ -46,6 +46,10 @@ class MPI_Communicator:
     def Scatter(self, tensor: torch.Tensor, scatteraxis: int, numelem: int, root: int) -> torch.Tensor:
         return self._comm.Scatter(tensor, scatteraxis, numelem, root)
 
+    def Alltoall(self, tensor: torch.Tensor, gatheraxis: int, scatteraxis: int,
+                 numelem: int) -> torch.Tensor:
+        return self._comm.Alltoall(tensor, gatheraxis, scatteraxis, numelem)
+
     def Isend(self, tensor: torch.Tensor, dest: int, tag: int) -> WaitHandle:
         return self._comm.Isend(tensor, dest, tag)
 

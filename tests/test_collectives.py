@@ -110,3 +110,22 @@ class TestScatter(unittest.TestCase):
             self.assertTrue((tmp.grad == torch.ones_like(tmp)).all())
         else:
             self.assertTrue((tmp.grad == torch.zeros_like(tmp)).all())
+
+class TestAlltoall(unittest.TestCase):
+    def test_gatherscatter_equivalence(self):
+        tmp = torch.rand([3,4,1,4,comm.size,2],dtype=torch.double)
+        res1 = comm.Scatter(comm.Gather(tmp,2,0),4,1,0)
+        res2 = comm.Alltoall(tmp,2,4,1)
+        self.assertTrue((res2 == res1).all())
+
+    def test_identity_equivalence(self):
+        tmp = torch.rand([3,4,2,4,3*comm.size,2],dtype=torch.double)
+        res = comm.Alltoall(tmp,2,4,3)
+        res2 = comm.Alltoall(res,4,2,2)
+        self.assertTrue((res2 == tmp).all())
+
+    def test_basic_ad(self):
+        tmp = torch.rand([3,4,2,4,comm.size,2],dtype=torch.double).requires_grad_()
+        res = comm.Alltoall(tmp,2,4,1)
+        res.sum().backward()
+        self.assertTrue((tmp.grad == torch.ones_like(tmp)).all())
