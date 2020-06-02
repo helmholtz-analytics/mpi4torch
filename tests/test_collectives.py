@@ -44,3 +44,69 @@ class TestBcast(unittest.TestCase):
             self.assertTrue((tmp.grad == comm.size * torch.ones(10,dtype=torch.double)).all())
         else:
             self.assertTrue((tmp.grad == torch.zeros(10,dtype=torch.double)).all())
+
+class TestGather(unittest.TestCase):
+    def test_basic_functionality(self):
+        numdim = 4
+        tmp = torch.rand([2,5,numdim,2,3],dtype=torch.double)
+        tmp[0,0,:,0,0] = comm.rank
+        res = comm.Gather(tmp, 2, 0)
+        if comm.rank == 0:
+            tmp2 = torch.squeeze(torch.sum(res[0,0,:,0,0]))
+            self.assertTrue((tmp2 == numdim * (comm.size - 1) * comm.size // 2).all())
+
+    def test_basic_ad(self):
+        numdim = 4
+        tmp = torch.rand([2,5,numdim,2,3],dtype=torch.double).requires_grad_()
+        res = comm.Gather(tmp, 2, 0)
+        res.sum().backward()
+        self.assertTrue((tmp.grad == torch.ones_like(tmp)).all())
+
+class TestAllgather(unittest.TestCase):
+    def test_basic_functionality(self):
+        numdim = 4
+        tmp = torch.rand([2,5,numdim,2,3],dtype=torch.double)
+        tmp[0,0,:,0,0] = comm.rank
+        res = comm.Allgather(tmp, 2)
+        tmp2 = torch.squeeze(torch.sum(res[0,0,:,0,0]))
+        self.assertTrue((tmp2 == numdim * (comm.size - 1) * comm.size // 2).all())
+
+    def test_basic_ad(self):
+        numdim = 4
+        tmp = torch.rand([2,5,numdim,2,3],dtype=torch.double).requires_grad_()
+        res = comm.Allgather(tmp, 2)
+        res.sum().backward()
+        self.assertTrue((tmp.grad == comm.size * torch.ones_like(tmp)).all())
+
+class TestScatter(unittest.TestCase):
+    def test_basic_functionality(self):
+        if comm.rank == 0:
+            tmp = torch.rand([2,5,comm.size,2,3],dtype=torch.double)
+            for i in range(comm.size):
+                tmp[0,0,i,0,0] = i
+        else:
+            tmp = torch.rand([1],dtype=torch.double)
+        res = comm.Scatter(tmp, 2, 1, 0)
+        self.assertTrue((res[0,0,:,0,0] == comm.rank).all())
+
+    def test_scattergather(self):
+        if comm.rank == 0:
+            tmp = torch.rand([2,5,comm.size,2,3],dtype=torch.double)
+        else:
+            tmp = torch.rand([1],dtype=torch.double)
+        res = comm.Scatter(tmp, 2, 1, 0)
+        res2 = comm.Gather(res, 2, 0)
+        if comm.rank == 0:
+            self.assertTrue((res2 == tmp).all())
+
+    def test_basic_ad(self):
+        if comm.rank == 0:
+            tmp = torch.rand([2,5,comm.size,2,3],dtype=torch.double).requires_grad_()
+        else:
+            tmp = torch.rand([1],dtype=torch.double).requires_grad_()
+        res = comm.Scatter(tmp, 2, 1, 0)
+        res.sum().backward()
+        if comm.rank == 0:
+            self.assertTrue((tmp.grad == torch.ones_like(tmp)).all())
+        else:
+            self.assertTrue((tmp.grad == torch.zeros_like(tmp)).all())

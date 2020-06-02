@@ -37,6 +37,15 @@ class MPI_Communicator:
     def Reduce_(self, tensor: torch.Tensor, root: int) -> torch.Tensor:
         return self._comm.Reduce_(tensor, root)
 
+    def Gather(self, tensor: torch.Tensor, gatheraxis: int, root: int) -> torch.Tensor:
+        return self._comm.Gather(tensor, gatheraxis, root)
+
+    def Allgather(self, tensor: torch.Tensor, gatheraxis: int) -> torch.Tensor:
+        return self._comm.Allgather(tensor, gatheraxis)
+
+    def Scatter(self, tensor: torch.Tensor, scatteraxis: int, numelem: int, root: int) -> torch.Tensor:
+        return self._comm.Scatter(tensor, scatteraxis, numelem, root)
+
     def Isend(self, tensor: torch.Tensor, dest: int, tag: int) -> WaitHandle:
         return self._comm.Isend(tensor, dest, tag)
 

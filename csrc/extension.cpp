@@ -66,6 +66,11 @@ struct MPI_Comm_Wrapper : torch::CustomClassHolder
     Tensor MPIAllreduce(const Tensor& input);
     Tensor MPIBcast_(const Tensor& input, int64_t root);
     Tensor MPIReduce_(const Tensor& input, int64_t root);
+
+    Tensor MPIGather(const Tensor& input, int64_t gatheraxis, int64_t root);
+    Tensor MPIAllgather(const Tensor& input, int64_t gatheraxis);
+    Tensor MPIScatter(const Tensor& input, int64_t scatteraxis, int64_t numelem, int64_t root);
+
     variable_list MPIIsend(const Tensor& input, int64_t dest, int64_t tag);
     variable_list MPIIrecv(const Tensor& input, int64_t source, int64_t tag);
     Tensor MPIWait(const variable_list& input);
@@ -289,6 +294,415 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t root)
             set_history(input_non_const, std::shared_ptr<MPINoInplaceBackward>(new MPINoInplaceBackward(),
                                                                      torch::autograd::deleteNode));
         }
+    }
+    return result;
+}
+
+struct MPIGatherBackward : public MPIBackwardNode {
+    MPIGatherBackward(int64_t _gatheraxis, int64_t _root)
+        : gatheraxis(_gatheraxis), root(_root) {}
+    variable_list apply(variable_list&& grads) override;
+    std::string name() const override {
+        return std::string("MPIGatherBackward");
+    }
+
+    void release_variables() override {
+        return;
+    }
+
+    int64_t gatheraxis;
+    int64_t root;
+};
+
+variable_list MPIGatherBackward::apply (variable_list&& grads)
+{
+    variable_list grad_inputs(1);
+    // TODO: for these simple functions the should_compute_output check is superfluous
+    if (should_compute_output(0)) {
+        auto next_node = next_edge(0).function;
+        auto input_nr = next_edge(0).input_nr;
+        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        grad_inputs[0] = comm.MPIScatter(grads[0],gatheraxis, numelem, root);
+    }
+    return grad_inputs;
+}
+
+Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int64_t root)
+{
+    // TODO: check for root being in int range
+    std::shared_ptr<MPIGatherBackward> grad_fn;
+    if (torch::autograd::compute_requires_grad(input)) {
+        grad_fn = std::shared_ptr<MPIGatherBackward>
+            (new MPIGatherBackward(gatheraxis, root),
+             torch::autograd::deleteNode);
+        grad_fn->comm = *this;
+        grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
+    }
+    auto result = ([&]() {
+        at::AutoNonVariableTypeMode non_var_type_mode(true);
+
+        // 1. Make input contiguous
+        auto input_cont = input.contiguous();
+
+        auto sizes = input_cont.sizes();
+        const size_t ndim = sizes.size();
+        const int npes = (int)GetSize();
+
+        int64_t beforegatheraxis64 = 1;
+        for (size_t i = 0; i < (size_t)gatheraxis; ++i) {
+            beforegatheraxis64 *= sizes[i];
+        }
+
+        int64_t aftergatheraxis64 = 1;
+        for (size_t i = (size_t)gatheraxis + 1; i < ndim; ++i) {
+            aftergatheraxis64 *= sizes[i];
+        }
+
+        if (beforegatheraxis64 > INT_MAX || aftergatheraxis64 * sizes[(size_t)gatheraxis] > INT_MAX) {
+            throw std::runtime_error("MPI_Gather: Tensor sizes exceed INT_MAX!");
+        }
+
+        const int beforegatheraxis = (int)beforegatheraxis64;
+        const int gatheraxissize = (int)sizes[(size_t)gatheraxis];
+        const int aftergatheraxis = (int)aftergatheraxis64;
+
+        std::vector<int> recvcounts(npes); // TODO: only allocate on root process
+
+        check_mpi_return_value(MPI_Gather(&gatheraxissize, 1, MPI_INT,
+                                          &recvcounts[0], 1,
+                                          MPI_INT, root, comm));
+
+        std::vector<int> displs(npes); // TODO: only allocate on root process
+        //displs[0] = 0; // This is a noop
+        for (size_t i = 1; i < (size_t)npes; ++i) {
+            int64_t tmpadd = (int64_t) displs[i-1] + (int64_t) recvcounts[i-1];
+
+            if (tmpadd > INT_MAX) {
+                throw std::runtime_error("MPI_Gather: Tensor sizes exceed INT_MAX!");
+            }
+            displs[i] = (int) tmpadd;
+        }
+        const int newgatheraxissize = displs[npes-1] + recvcounts[npes-1]; // TODO: add overflow check
+
+        MPI_Datatype tmpdatatype1;
+        check_mpi_return_value(MPI_Type_vector(beforegatheraxis, aftergatheraxis, aftergatheraxis * gatheraxissize,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype1));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype1));
+
+        MPI_Datatype sendtype;
+        MPI_Aint basic_lb, basic_extent;
+        check_mpi_return_value(MPI_Type_get_extent(torch2mpitype(input_cont.scalar_type()), &basic_lb,
+                                                   &basic_extent));
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype1, 0, aftergatheraxis * basic_extent,
+                                                       &sendtype));
+        check_mpi_return_value(MPI_Type_commit(&sendtype));
+
+        MPI_Datatype tmpdatatype2;
+        check_mpi_return_value(MPI_Type_vector(beforegatheraxis, aftergatheraxis,
+                                               newgatheraxissize * aftergatheraxis,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype2));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype2));
+        MPI_Datatype recvtype;
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype2, 0, aftergatheraxis * basic_extent,
+                                                       &recvtype));
+        check_mpi_return_value(MPI_Type_commit(&recvtype));
+
+        std::vector<int64_t> newsizes(sizes.begin(), sizes.end());
+        newsizes[(size_t)gatheraxis] = newgatheraxissize;
+
+        auto recvtensor = torch::empty(newsizes, input_cont.options(), c10::MemoryFormat::Contiguous);
+
+        check_mpi_return_value(MPI_Gatherv(input_cont.data_ptr(), gatheraxissize, sendtype,
+                                           recvtensor.data_ptr(), &recvcounts[0], &displs[0], recvtype,
+                                           static_cast<int>(root), comm));
+
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype1));
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype2));
+        check_mpi_return_value(MPI_Type_free(&sendtype));
+        check_mpi_return_value(MPI_Type_free(&recvtype));
+
+        return recvtensor;
+    })();
+    if (grad_fn) {
+        set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
+    }
+    return result;
+}
+
+struct MPIAllgatherBackward : public MPIBackwardNode {
+    MPIAllgatherBackward(int64_t _gatheraxis) : gatheraxis(_gatheraxis) {}
+    variable_list apply(variable_list&& grads) override;
+    std::string name() const override {
+        return std::string("MPIAllgatherBackward");
+    }
+
+    void release_variables() override {
+        return;
+    }
+
+    int64_t gatheraxis;
+};
+
+variable_list MPIAllgatherBackward::apply (variable_list&& grads)
+{
+    variable_list grad_inputs(1);
+    // TODO: for these simple functions the should_compute_output check is superfluous
+    if (should_compute_output(0)) {
+        auto next_node = next_edge(0).function;
+        auto input_nr = next_edge(0).input_nr;
+        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        grad_inputs[0] = comm.MPIScatter(grads[0], gatheraxis, numelem, 0);
+        for (int64_t root = 1; root < comm.GetSize(); ++root) {
+            grad_inputs[0] += comm.MPIScatter(grads[0], gatheraxis, numelem, 1);
+        }
+    }
+    return grad_inputs;
+}
+
+Tensor MPI_Comm_Wrapper::MPIAllgather(const Tensor& input, int64_t gatheraxis)
+{
+    // TODO: check for root being in int range
+    std::shared_ptr<MPIAllgatherBackward> grad_fn;
+    if (torch::autograd::compute_requires_grad(input)) {
+        grad_fn = std::shared_ptr<MPIAllgatherBackward>
+            (new MPIAllgatherBackward(gatheraxis), torch::autograd::deleteNode);
+        grad_fn->comm = *this;
+        grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
+    }
+    auto result = ([&]() {
+        at::AutoNonVariableTypeMode non_var_type_mode(true);
+
+        // 1. Make input contiguous
+        auto input_cont = input.contiguous();
+
+        auto sizes = input_cont.sizes();
+        const size_t ndim = sizes.size();
+        const int npes = (int)GetSize();
+
+        int64_t beforegatheraxis64 = 1;
+        for (size_t i = 0; i < (size_t)gatheraxis; ++i) {
+            beforegatheraxis64 *= sizes[i];
+        }
+
+        int64_t aftergatheraxis64 = 1;
+        for (size_t i = (size_t)gatheraxis + 1; i < ndim; ++i) {
+            aftergatheraxis64 *= sizes[i];
+        }
+
+        if (beforegatheraxis64 > INT_MAX || aftergatheraxis64 * sizes[(size_t)gatheraxis] > INT_MAX) {
+            throw std::runtime_error("MPI_Gather: Tensor sizes exceed INT_MAX!");
+        }
+
+        const int beforegatheraxis = (int)beforegatheraxis64;
+        const int gatheraxissize = (int)sizes[(size_t)gatheraxis];
+        const int aftergatheraxis = (int)aftergatheraxis64;
+
+        std::vector<int> recvcounts(npes);
+
+        check_mpi_return_value(MPI_Allgather(&gatheraxissize, 1, MPI_INT,
+                                             &recvcounts[0], 1,
+                                             MPI_INT, comm));
+
+        std::vector<int> displs(npes);
+        //displs[0] = 0; // This is a noop
+        for (size_t i = 1; i < (size_t)npes; ++i) {
+            int64_t tmpadd = (int64_t) displs[i-1] + (int64_t) recvcounts[i-1];
+
+            if (tmpadd > INT_MAX) {
+                throw std::runtime_error("MPI_Gather: Tensor sizes exceed INT_MAX!");
+            }
+            displs[i] = (int) tmpadd;
+        }
+        const int newgatheraxissize = displs[npes-1] + recvcounts[npes-1];
+
+        MPI_Datatype tmpdatatype1;
+        check_mpi_return_value(MPI_Type_vector(beforegatheraxis, aftergatheraxis, aftergatheraxis * gatheraxissize,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype1));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype1));
+
+        MPI_Datatype sendtype;
+        MPI_Aint basic_lb, basic_extent;
+        check_mpi_return_value(MPI_Type_get_extent(torch2mpitype(input_cont.scalar_type()), &basic_lb,
+                                                   &basic_extent));
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype1, 0, aftergatheraxis * basic_extent,
+                                                       &sendtype));
+        check_mpi_return_value(MPI_Type_commit(&sendtype));
+
+        MPI_Datatype tmpdatatype2;
+        check_mpi_return_value(MPI_Type_vector(beforegatheraxis, aftergatheraxis,
+                                               newgatheraxissize * aftergatheraxis,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype2));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype2));
+        MPI_Datatype recvtype;
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype2, 0, aftergatheraxis * basic_extent,
+                                                       &recvtype));
+        check_mpi_return_value(MPI_Type_commit(&recvtype));
+
+        std::vector<int64_t> newsizes(sizes.begin(), sizes.end());
+        newsizes[(size_t)gatheraxis] = newgatheraxissize;
+
+        auto recvtensor = torch::empty(newsizes, input_cont.options(), c10::MemoryFormat::Contiguous);
+
+        check_mpi_return_value(MPI_Allgatherv(input_cont.data_ptr(), gatheraxissize, sendtype,
+                                              recvtensor.data_ptr(), &recvcounts[0], &displs[0], recvtype,
+                                              comm));
+
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype1));
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype2));
+        check_mpi_return_value(MPI_Type_free(&sendtype));
+        check_mpi_return_value(MPI_Type_free(&recvtype));
+
+        return recvtensor;
+    })();
+    if (grad_fn) {
+        set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
+    }
+    return result;
+}
+
+struct MPIScatterBackward : public MPIBackwardNode {
+    MPIScatterBackward(int64_t _scatteraxis, int64_t _root)
+        : scatteraxis(_scatteraxis), root(_root) {}
+    variable_list apply(variable_list&& grads) override;
+    std::string name() const override {
+        return std::string("MPIScatterBackward");
+    }
+
+    void release_variables() override {
+        return;
+    }
+
+    int64_t scatteraxis;
+    int64_t root;
+};
+
+variable_list MPIScatterBackward::apply (variable_list&& grads)
+{
+    variable_list grad_inputs(1);
+    // TODO: for these simple functions the should_compute_output check is superfluous
+    if (should_compute_output(0)) {
+        auto tmp = comm.MPIGather(grads[0],scatteraxis, root);
+        if (comm.GetRank() == root) {
+            grad_inputs[0] = tmp;
+        } else {
+            auto next_node = next_edge(0).function;
+            auto input_nr = next_edge(0).input_nr;
+            grad_inputs[0] = JoinDummies(next_node->input_metadata(input_nr).zeros_like(), {tmp});
+        }
+    }
+    return grad_inputs;
+}
+
+Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, int64_t numelem, int64_t root)
+{
+    // TODO: check for root being in int range
+    std::shared_ptr<MPIScatterBackward> grad_fn;
+    if (torch::autograd::compute_requires_grad(input)) {
+        grad_fn = std::shared_ptr<MPIScatterBackward>
+            (new MPIScatterBackward(scatteraxis, root),
+             torch::autograd::deleteNode);
+        grad_fn->comm = *this;
+        grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
+    }
+    auto result = ([&]() {
+        at::AutoNonVariableTypeMode non_var_type_mode(true);
+
+        // 1. Make input contiguous
+        auto input_cont = GetRank() == root ? input.contiguous() : input;
+
+        size_t ndim = input_cont.sizes().size();
+        check_mpi_return_value(MPI_Bcast(&ndim, 1, MPI_LONG, root, comm));
+        std::vector<int64_t> sizes;
+        if (GetRank() == root) {
+            sizes = std::move(input_cont.sizes().vec());
+        } else {
+            sizes.resize(ndim);
+        }
+        check_mpi_return_value(MPI_Bcast(&sizes[0], (int)ndim, MPI_LONG, root, comm));
+
+        const int npes = (int)GetSize();
+
+        int64_t beforescatteraxis64 = 1;
+        for (size_t i = 0; i < (size_t)scatteraxis; ++i) {
+            beforescatteraxis64 *= sizes[i];
+        }
+
+        int64_t afterscatteraxis64 = 1;
+        for (size_t i = (size_t)scatteraxis + 1; i < ndim; ++i) {
+            afterscatteraxis64 *= sizes[i];
+        }
+
+        if (beforescatteraxis64 > INT_MAX || afterscatteraxis64 * sizes[(size_t)scatteraxis] > INT_MAX) {
+            throw std::runtime_error("MPI_Scatter: Tensor sizes exceed INT_MAX!");
+        }
+
+        const int beforescatteraxis = (int)beforescatteraxis64;
+        const int scatteraxissize = (int)sizes[(size_t)scatteraxis];
+        const int afterscatteraxis = (int)afterscatteraxis64;
+        const int newscatteraxissize = (int) numelem;
+
+        std::vector<int> sendcounts(npes); // TODO: only allocate on root process
+
+        check_mpi_return_value(MPI_Gather(&newscatteraxissize, 1, MPI_INT,
+                                          &sendcounts[0], 1,
+                                          MPI_INT, root, comm));
+
+        std::vector<int> displs(npes); // TODO: only allocate on root process
+        //displs[0] = 0; // This is a noop
+        for (size_t i = 1; i < (size_t)npes; ++i) {
+            int64_t tmpadd = (int64_t) displs[i-1] + (int64_t) sendcounts[i-1];
+
+            if (tmpadd > INT_MAX) {
+                throw std::runtime_error("MPI_Scatter: Tensor sizes exceed INT_MAX!");
+            }
+            displs[i] = (int) tmpadd;
+        }
+        if (root == GetRank() && scatteraxissize != displs[npes-1] + sendcounts[npes-1]) {
+            throw std::runtime_error("MPI_Scatter: finaltensor.shape[scatteraxis] != sum(numelem)!");
+        }
+
+        MPI_Datatype tmpdatatype1;
+        check_mpi_return_value(MPI_Type_vector(beforescatteraxis, afterscatteraxis,
+                                               afterscatteraxis * scatteraxissize,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype1));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype1));
+
+        MPI_Datatype sendtype;
+        MPI_Aint basic_lb, basic_extent;
+        check_mpi_return_value(MPI_Type_get_extent(torch2mpitype(input_cont.scalar_type()), &basic_lb,
+                                                   &basic_extent));
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype1, 0, afterscatteraxis * basic_extent,
+                                                       &sendtype));
+        check_mpi_return_value(MPI_Type_commit(&sendtype));
+
+        MPI_Datatype tmpdatatype2;
+        check_mpi_return_value(MPI_Type_vector(beforescatteraxis, afterscatteraxis,
+                                               newscatteraxissize * afterscatteraxis,
+                                               torch2mpitype(input_cont.scalar_type()), &tmpdatatype2));
+        check_mpi_return_value(MPI_Type_commit(&tmpdatatype2));
+        MPI_Datatype recvtype;
+        check_mpi_return_value(MPI_Type_create_resized(tmpdatatype2, 0, afterscatteraxis * basic_extent,
+                                                       &recvtype));
+        check_mpi_return_value(MPI_Type_commit(&recvtype));
+
+        std::vector<int64_t> newsizes(sizes.begin(), sizes.end());
+        newsizes[(size_t)scatteraxis] = newscatteraxissize;
+
+        auto recvtensor = torch::empty(newsizes, input_cont.options(), c10::MemoryFormat::Contiguous);
+
+        check_mpi_return_value(MPI_Scatterv(input_cont.data_ptr(), &sendcounts[0], &displs[0], sendtype,
+                                            recvtensor.data_ptr(), newscatteraxissize, recvtype,
+                                            static_cast<int>(root), comm));
+
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype1));
+        check_mpi_return_value(MPI_Type_free(&tmpdatatype2));
+        check_mpi_return_value(MPI_Type_free(&sendtype));
+        check_mpi_return_value(MPI_Type_free(&recvtype));
+
+        return recvtensor;
+    })();
+    if (grad_fn) {
+        set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
     }
     return result;
 }
@@ -559,6 +973,9 @@ static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torch
     .def("Allreduce", &MPI_Comm_Wrapper::MPIAllreduce)
     .def("Bcast_", &MPI_Comm_Wrapper::MPIBcast_)
     .def("Reduce_", &MPI_Comm_Wrapper::MPIReduce_)
+    .def("Gather", &MPI_Comm_Wrapper::MPIGather)
+    .def("Allgather", &MPI_Comm_Wrapper::MPIAllgather)
+    .def("Scatter", &MPI_Comm_Wrapper::MPIScatter)
     .def("Isend", &MPI_Comm_Wrapper::MPIIsend)
     .def("Irecv", &MPI_Comm_Wrapper::MPIIrecv)
     .def("Wait", &MPI_Comm_Wrapper::MPIWait)
