@@ -63,4 +63,12 @@ class MPI_Communicator:
     def Wait(self, waithandle: WaitHandle) -> torch.Tensor:
         return self._comm.Wait(waithandle)
 
+    def Send(self, tensor: torch.Tensor, dest: int, tag: int) -> torch.Tensor:
+        handle = self._comm.Isend(tensor, dest, tag)
+        return self._comm.Wait(handle)
+
+    def Recv(self, tensor: torch.Tensor, source: int, tag: int) -> torch.Tensor:
+        handle = self._comm.Irecv(tensor, source, tag)
+        return self._comm.Wait(handle)
+
 COMM_WORLD = MPI_Communicator(torch.ops.torchmpi.COMM_WORLD())
