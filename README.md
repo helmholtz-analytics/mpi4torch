@@ -16,6 +16,8 @@ it has for AD.
 **WARNING** The software is still in an early development phase. Especially the API
 might still be subject to change.
 
+[[_TOC_]]
+
 # Install
 
 Make sure you have the development tools for MPI installed, either through some module system
@@ -56,7 +58,7 @@ written to the file**, i.e., commands which are executed after each other in the
 executed in reverse order in the backward step unless their is an explicit dependence of the second command on
 the result of the first. E.g. consider the following pseudo code, where two processes exchange data through
 the common Isend-Recv-Wait idiom
-```
+```python
     handle = comm.Isend(sendbuffer,0,0)
     comm.Recv(recvbuffer,0,0)
     comm.Wait(handle)
@@ -65,7 +67,7 @@ the common Isend-Recv-Wait idiom
 In the forward step, everything would work as expected, the code would be executed sequentially as it is was written
 to the file. However, in the backward step the information is missing that the `Recv` call has to happen after
 the `Isend` call and before the `Wait` call. `JoinDummies` helps here to encode this implicit dependency
-```
+```python
     handle = comm.Isend(sendbuffer,0,0)
     res1 = comm.Recv(torchmpi.JoinDummies(recvbuffer,[handle[0]),0,0)
     res2 = comm.Wait(torchmpi.JoinDummiesHandle(handle,[res1]))
@@ -92,7 +94,7 @@ To sum up:
 An easy and low-hanging fruit usage is to make your code data-parallel. E.g. consider the following example, which
 can be found in [examples/simple_linear_regression.py](examples/simple_linear_regression.py)
 
-```
+```python
 import torch
 import torchmpi
 
