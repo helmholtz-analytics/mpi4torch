@@ -14,13 +14,13 @@ youtput = some_parametrized_function(xinput, gen_params)
 
 def lossfunction(params):
     # average initial params to bring all ranks on the same page
-    params = comm.Allreduce(params) / comm.size
+    params = comm.Allreduce(params,torchmpi.MPI_SUM) / comm.size
 
     # compute local loss
     localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
 
     # average loss among all ranks
-    return comm.Allreduce(localloss) / comm.size
+    return comm.Allreduce(localloss, torchmpi.MPI_SUM) / comm.size
 
 params = torch.arange(3, dtype=torch.double).requires_grad_()
 

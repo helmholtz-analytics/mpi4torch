@@ -63,9 +63,9 @@ struct MPI_Comm_Wrapper : torch::CustomClassHolder
     int64_t GetRank();
     int64_t GetSize();
 
-    Tensor MPIAllreduce(const Tensor& input);
+    Tensor MPIAllreduce(const Tensor& input, int64_t op);
     Tensor MPIBcast_(const Tensor& input, int64_t root);
-    Tensor MPIReduce_(const Tensor& input, int64_t root);
+    Tensor MPIReduce_(const Tensor& input, int64_t op, int64_t root);
 
     Tensor MPIGather(const Tensor& input, int64_t gatheraxis, int64_t root);
     Tensor MPIAllgather(const Tensor& input, int64_t gatheraxis);
@@ -103,10 +103,70 @@ struct MPIBackwardNode : public torch::autograd::Node
     MPI_Comm_Wrapper comm;
 };
 
-struct MPIAllreduceBackward : public MPIBackwardNode {
+struct MPIUnimplementedNode : MPIBackwardNode
+{
+    variable_list apply(variable_list&& grads) override {
+        throw std::runtime_error("This backward operation is currently unimplemented!");
+    }
+    std::string name() const override {
+        return std::string("MPIUnimplementedNode");
+    }
+};
+
+enum TorchmpiCollectiveOps : int64_t
+{
+    torchmpi_op_max,
+    torchmpi_op_min,
+    torchmpi_op_sum,
+    torchmpi_op_prod,
+    torchmpi_op_land,
+    torchmpi_op_band,
+    torchmpi_op_lor,
+    torchmpi_op_bor,
+    torchmpi_op_lxor,
+    torchmpi_op_bxor,
+    torchmpi_op_minloc,
+    torchmpi_op_maxloc
+};
+
+MPI_Op __get_mpi_op(int64_t op)
+{
+    switch(op)
+    {
+    case torchmpi_op_max:
+        return MPI_MAX;
+    case torchmpi_op_min:
+        return MPI_MIN;
+    case torchmpi_op_sum:
+        return MPI_SUM;
+    case torchmpi_op_prod:
+        return MPI_PROD;
+    case torchmpi_op_land:
+        return MPI_LAND;
+    case torchmpi_op_band:
+        return MPI_BAND;
+    case torchmpi_op_lor:
+        return MPI_LOR;
+    case torchmpi_op_bor:
+        return MPI_BOR;
+    case torchmpi_op_lxor:
+        return MPI_LXOR;
+    case torchmpi_op_bxor:
+        return MPI_BXOR;
+    case torchmpi_op_minloc:
+        return MPI_MINLOC;
+    case torchmpi_op_maxloc:
+        return MPI_MAXLOC;
+    default:
+        break;
+    }
+    throw std::invalid_argument("torchmpi: Collective operation not supported!");
+}
+
+struct MPIAllreduceSumBackward : public MPIBackwardNode {
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
-        return std::string("MPIAllreduceBackward");
+        return std::string("MPIAllreduceSumBackward");
     }
 
     void release_variables() override {
@@ -114,20 +174,25 @@ struct MPIAllreduceBackward : public MPIBackwardNode {
     }
 };
 
-variable_list MPIAllreduceBackward::apply (variable_list&& grads)
+variable_list MPIAllreduceSumBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = comm.MPIAllreduce(grads[0]);
+        grad_inputs[0] = comm.MPIAllreduce(grads[0], torchmpi_op_sum);
     }
     return grad_inputs;
 }
 
-Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input)
+Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input, int64_t op)
 {
-    std::shared_ptr<MPIAllreduceBackward> grad_fn;
+    std::shared_ptr<MPIBackwardNode> grad_fn;
+    auto mpiop = __get_mpi_op(op);
     if (torch::autograd::compute_requires_grad(input)) {
-        grad_fn = std::shared_ptr<MPIAllreduceBackward> (new MPIAllreduceBackward(), torch::autograd::deleteNode);
+        if (op == torchmpi_op_sum) {
+            grad_fn = std::shared_ptr<MPIAllreduceSumBackward> (new MPIAllreduceSumBackward(), torch::autograd::deleteNode);
+        } else {
+            grad_fn = std::shared_ptr<MPIUnimplementedNode>(new MPIUnimplementedNode(), torch::autograd::deleteNode);
+        }
         grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
@@ -141,7 +206,7 @@ Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input)
 
         check_mpi_return_value(
             MPI_Allreduce(input_cont.data_ptr(), recv.data_ptr(), input_cont.numel(),
-                      torch2mpitype(input_cont.scalar_type()), MPI_SUM, comm)
+                      torch2mpitype(input_cont.scalar_type()), mpiop, comm)
         );
 
         return recv;
@@ -170,7 +235,7 @@ variable_list MPIBcastInPlaceBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = comm.MPIReduce_(grads[0],root);
+        grad_inputs[0] = comm.MPIReduce_(grads[0],torchmpi_op_sum,root);
     }
     return grad_inputs;
 }
@@ -207,11 +272,11 @@ Tensor MPI_Comm_Wrapper::MPIBcast_(const Tensor& input, int64_t root)
     return result;
 }
 
-struct MPIReduceInPlaceBackward : public MPIBackwardNode {
-    MPIReduceInPlaceBackward(int _root) : root(_root) {}
+struct MPIReduceSumInPlaceBackward : public MPIBackwardNode {
+    MPIReduceSumInPlaceBackward(int _root) : root(_root) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
-        return std::string("MPIReduceInPlaceBackward");
+        return std::string("MPIReduceSumInPlaceBackward");
     }
 
     void release_variables() override {
@@ -221,7 +286,7 @@ struct MPIReduceInPlaceBackward : public MPIBackwardNode {
     int root;
 };
 
-variable_list MPIReduceInPlaceBackward::apply (variable_list&& grads)
+variable_list MPIReduceSumInPlaceBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     // TODO: for these simple functions the should_compute_output check is superfluous
@@ -245,13 +310,18 @@ struct MPINoInplaceBackward : public torch::autograd::Node {
     }
 };
 
-Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t root)
+Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t root)
 {
     // TODO: check for root being in int range
-    std::shared_ptr<MPIReduceInPlaceBackward> grad_fn;
+    std::shared_ptr<MPIBackwardNode> grad_fn;
+    auto mpiop = __get_mpi_op(op);
     if (torch::autograd::compute_requires_grad(input)) {
-        grad_fn = std::shared_ptr<MPIReduceInPlaceBackward> (new MPIReduceInPlaceBackward(static_cast<int>(root)),
+        if (op == torchmpi_op_sum) {
+            grad_fn = std::shared_ptr<MPIReduceSumInPlaceBackward> (new MPIReduceSumInPlaceBackward(static_cast<int>(root)),
                                                       torch::autograd::deleteNode);
+        } else {
+            grad_fn = std::shared_ptr<MPIUnimplementedNode> (new MPIUnimplementedNode(), torch::autograd::deleteNode);
+        }
         grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
@@ -274,7 +344,7 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t root)
 
         check_mpi_return_value(MPI_Reduce(sendbuf, input_cont.data_ptr(), input_cont.numel(),
                                           torch2mpitype(input_cont.scalar_type()),
-                                          MPI_SUM, static_cast<int>(root), comm));
+                                          mpiop, static_cast<int>(root), comm));
 
         if (rank != root) {
             // We fill the non-root results with zeros to make the function properly behaved.
@@ -1080,5 +1150,26 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     //
     // [1] https://github.com/open-mpi/ompi/issues/3705
     m.import("mpi4py.MPI");
+
+    // Torchscript does not like the pybind11 enum_ solution
+    //py::enum_<TorchmpiCollectiveOps>(m, "MPI_Op")
+    //    .value("MPI_MAX", TorchmpiCollectiveOps::torchmpi_op_max)
+    //    .value("MPI_MIN", TorchmpiCollectiveOps::torchmpi_op_min)
+    //    .value("MPI_SUM", TorchmpiCollectiveOps::torchmpi_op_sum)
+    //    .value("MPI_PROD", TorchmpiCollectiveOps::torchmpi_op_prod)
+    //    .export_values();
+
+    m.attr("MPI_MAX") = py::int_((int64_t)torchmpi_op_max);
+    m.attr("MPI_MIN") = py::int_((int64_t)torchmpi_op_min);
+    m.attr("MPI_SUM") = py::int_((int64_t)torchmpi_op_sum);
+    m.attr("MPI_PROD") = py::int_((int64_t)torchmpi_op_prod);
+    m.attr("MPI_LAND") = py::int_((int64_t)torchmpi_op_land);
+    m.attr("MPI_BAND") = py::int_((int64_t)torchmpi_op_band);
+    m.attr("MPI_LOR") = py::int_((int64_t)torchmpi_op_lor);
+    m.attr("MPI_BOR") = py::int_((int64_t)torchmpi_op_bor);
+    m.attr("MPI_LXOR") = py::int_((int64_t)torchmpi_op_lxor);
+    m.attr("MPI_BXOR") = py::int_((int64_t)torchmpi_op_bxor);
+    m.attr("MPI_MINLOC") = py::int_((int64_t)torchmpi_op_minloc);
+    m.attr("MPI_MAXLOC") = py::int_((int64_t)torchmpi_op_maxloc);
 }
 

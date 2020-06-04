@@ -1,5 +1,5 @@
 import torch
-from . import _mpi
+from ._mpi import *
 from typing import List
 
 WaitHandle = List[torch.Tensor]
@@ -32,14 +32,14 @@ class MPI_Communicator:
     #    return self.__dict__[attrName]
     # So we need to write out every function by hand
 
-    def Allreduce(self, tensor: torch.Tensor) -> torch.Tensor:
-        return self._comm.Allreduce(tensor)
+    def Allreduce(self, tensor: torch.Tensor, op: int) -> torch.Tensor:
+        return self._comm.Allreduce(tensor, op)
 
     def Bcast_(self, tensor: torch.Tensor, root: int) -> torch.Tensor:
         return self._comm.Bcast_(tensor, root)
 
-    def Reduce_(self, tensor: torch.Tensor, root: int) -> torch.Tensor:
-        return self._comm.Reduce_(tensor, root)
+    def Reduce_(self, tensor: torch.Tensor, op: int, root: int) -> torch.Tensor:
+        return self._comm.Reduce_(tensor, op, root)
 
     def Gather(self, tensor: torch.Tensor, gatheraxis: int, root: int) -> torch.Tensor:
         return self._comm.Gather(tensor, gatheraxis, root)
