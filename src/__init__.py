@@ -10,7 +10,7 @@ def JoinDummies(tensor: torch.Tensor, args:List[torch.Tensor]) -> torch.Tensor:
 
 @torch.jit.script
 def JoinDummiesHandle(handle: List[torch.Tensor], args:List[torch.Tensor]) -> List[torch.Tensor]:
-    return [ torch.ops.torchmpi.JoinDummies(handle[0], args), handle[1] ]
+    return [ torch.ops.torchmpi.JoinDummies(handle[0], args), handle[1], handle[2] ]
 
 @torch.jit.script
 class MPI_Communicator:

@@ -9,6 +9,11 @@
 
 #include <mpi.h>
 
+#if defined(OPEN_MPI) && OPEN_MPI
+// Needed for checking cuda-awareness
+#include <mpi-ext.h>
+#endif
+
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
@@ -19,6 +24,84 @@ using torch::autograd::variable_list;
 
 namespace
 {
+
+#if defined(MPIX_CUDA_AWARE_SUPPORT)
+// if it is at compiletime already clear that OpenMPI has now support, we deactivate
+// the cuda-aware mpi support directly
+#define TORCHMPI_BUILT_WITH_CUDA_AWARENESS MPIX_CUDA_AWARE_SUPPORT
+#else
+#define TORCHMPI_BUILT_WITH_CUDA_AWARENESS 0
+#endif
+
+#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+
+bool have_cuda_aware_mpi_support = false;
+
+void inline __setup_have_cuda_aware_mpi_support()
+{
+    // OpenMPI (and presumably also Parastation MPI) provides this runtime query function
+#if defined(MPIX_CUDA_AWARE_SUPPORT)
+    have_cuda_aware_mpi_support = MPIX_Query_cuda_support();
+#else
+    have_cuda_aware_mpi_support = false;
+#endif
+}
+
+#else
+const bool have_cuda_aware_mpi_support = false;
+#endif
+
+void deactivate_cuda_aware_mpi_support()
+{
+#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+    have_cuda_aware_mpi_support = false;
+#endif
+}
+
+struct MPIDeviceHelper
+{
+    MPIDeviceHelper(const Tensor& input)
+        : device(input.device()), devicetype(device.type()), mpidevice(c10::kCPU)
+    {
+        setup();
+    }
+
+    MPIDeviceHelper(const c10::Device& _device)
+        : device(_device), devicetype(device.type()), mpidevice(c10::kCPU)
+    {
+        setup();
+    }
+
+    Tensor fromDeviceToMPI(const Tensor& input)
+    {
+        if (input.device() == mpidevice) {
+            return input;
+        }
+        return input.to(mpidevice);
+    }
+
+    Tensor fromMPIToDevice(const Tensor& output)
+    {
+        if (output.device() == device) {
+            return output;
+        }
+        return output.to(device);
+    }
+
+    c10::Device device;
+    c10::DeviceType devicetype;
+    c10::Device mpidevice;
+
+private:
+    void setup()
+    {
+        if (devicetype == c10::kCPU) {
+            mpidevice = device;
+        } else if (devicetype == c10::kCUDA && have_cuda_aware_mpi_support) {
+            mpidevice = device;
+        }
+    }
+};
 
 MPI_Datatype torch2mpitype(ScalarType in)
 {
@@ -199,8 +282,10 @@ Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input, int64_t op)
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // make input contiguous
-        auto input_cont = input.contiguous();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous();
 
         auto recv = torch::empty_like(input_cont);
 
@@ -209,7 +294,7 @@ Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input, int64_t op)
                       torch2mpitype(input_cont.scalar_type()), mpiop, comm)
         );
 
-        return recv;
+        return devhelper.fromMPIToDevice(recv);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -253,10 +338,12 @@ Tensor MPI_Comm_Wrapper::MPIBcast_(const Tensor& input, int64_t root)
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // 1. Make input contiguous
         // 2. Call variable_data() to make a shallow copy of the input tensor without the autograd history,
         //    such that it can be savely returned from this function.
-        auto input_cont = input.contiguous().variable_data();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous().variable_data();
 
         check_mpi_return_value(
             MPI_Bcast(input_cont.data_ptr(), input_cont.numel(),
@@ -264,7 +351,7 @@ Tensor MPI_Comm_Wrapper::MPIBcast_(const Tensor& input, int64_t root)
                   static_cast<int>(root), comm)
         );
 
-        return input_cont;
+        return devhelper.fromMPIToDevice(input_cont);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -328,10 +415,12 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t roo
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // 1. Make input contiguous
         // 2. Call variable_data() to make a shallow copy of the input tensor without the autograd history,
         //    such that it can be savely returned from this function.
-        auto input_cont = input.contiguous().variable_data();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous().variable_data();
 
         const int rank = GetRank();
 
@@ -352,7 +441,7 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t roo
             input_cont.zero_();
         }
 
-        return input_cont;
+        return devhelper.fromMPIToDevice(input_cont);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -412,8 +501,10 @@ Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int6
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // 1. Make input contiguous
-        auto input_cont = input.contiguous();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous();
 
         auto sizes = input_cont.sizes();
         const size_t ndim = sizes.size();
@@ -492,7 +583,7 @@ Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int6
         check_mpi_return_value(MPI_Type_free(&sendtype));
         check_mpi_return_value(MPI_Type_free(&recvtype));
 
-        return recvtensor;
+        return devhelper.fromMPIToDevice(recvtensor);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -543,8 +634,10 @@ Tensor MPI_Comm_Wrapper::MPIAllgather(const Tensor& input, int64_t gatheraxis)
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // 1. Make input contiguous
-        auto input_cont = input.contiguous();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous();
 
         auto sizes = input_cont.sizes();
         const size_t ndim = sizes.size();
@@ -623,7 +716,7 @@ Tensor MPI_Comm_Wrapper::MPIAllgather(const Tensor& input, int64_t gatheraxis)
         check_mpi_return_value(MPI_Type_free(&sendtype));
         check_mpi_return_value(MPI_Type_free(&recvtype));
 
-        return recvtensor;
+        return devhelper.fromMPIToDevice(recvtensor);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -678,8 +771,10 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // 1. Make input contiguous
-        auto input_cont = GetRank() == root ? input.contiguous() : input;
+        auto input_cont = GetRank() == root ? devhelper.fromDeviceToMPI(input).contiguous() : input;
 
         size_t ndim = input_cont.sizes().size();
         check_mpi_return_value(MPI_Bcast(&ndim, 1, MPI_LONG, root, comm));
@@ -759,7 +854,8 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
         std::vector<int64_t> newsizes(sizes.begin(), sizes.end());
         newsizes[(size_t)scatteraxis] = newscatteraxissize;
 
-        auto recvtensor = torch::empty(newsizes, input_cont.options(), c10::MemoryFormat::Contiguous);
+        auto recvtensor = torch::empty(newsizes, input_cont.options().device(devhelper.mpidevice),
+                                       c10::MemoryFormat::Contiguous);
 
         check_mpi_return_value(MPI_Scatterv(input_cont.data_ptr(), &sendcounts[0], &displs[0], sendtype,
                                             recvtensor.data_ptr(), newscatteraxissize, recvtype,
@@ -770,7 +866,7 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
         check_mpi_return_value(MPI_Type_free(&sendtype));
         check_mpi_return_value(MPI_Type_free(&recvtype));
 
-        return recvtensor;
+        return devhelper.fromMPIToDevice(recvtensor);
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -937,25 +1033,30 @@ variable_list MPI_Comm_Wrapper::MPIIsend(const Tensor& input, int64_t dest, int6
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // make input contiguous
         // we call variable_data() since we also return the input buffer to ensure it stays in scope
-        auto input_cont = input.contiguous().variable_data();
+        auto input_cont = devhelper.fromDeviceToMPI(input).contiguous().variable_data();
 
         MPI_Request req;
         check_mpi_return_value(MPI_Isend(input_cont.data_ptr(), input_cont.numel(),
                   torch2mpitype(input_cont.scalar_type()), static_cast<int>(dest),
                   static_cast<int>(tag), comm, &req));
 
-        auto ret = torch::empty({5},at::kDouble);
+        auto ret = torch::empty({7},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
         ret[0] = static_cast<double>(fortran_handle);
         ret[1] = static_cast<double>(Isend_Op);
         ret[2] = static_cast<double>(dest);
         ret[3] = static_cast<double>(tag);
         ret[4] = static_cast<double>(0xFFFFFFFF & std::hash<void*>()(input_cont.data_ptr()));
+        ret[5] = static_cast<double>(devhelper.devicetype);
+        ret[6] = static_cast<double>(devhelper.device.index());
         variable_list retlist;
         retlist.push_back(ret);
         retlist.push_back(input_cont); // make sure the buffer stays in scope!!!
+        retlist.push_back(input.variable_data());
         return retlist;
     })();
     if (grad_fn) {
@@ -976,24 +1077,30 @@ variable_list MPI_Comm_Wrapper::MPIIrecv(const Tensor& input, int64_t source, in
     auto result = ([&]() {
         at::AutoNonVariableTypeMode non_var_type_mode(true);
 
+        MPIDeviceHelper devhelper(input);
+
         // TODO: check whether input is contiguous
-        auto input_cont = input.variable_data();
+        // TODO: Maybe add warning if input device is not mpi device
+        auto input_cont = devhelper.fromDeviceToMPI(input).variable_data();
 
         MPI_Request req;
         check_mpi_return_value(MPI_Irecv(input_cont.data_ptr(), input_cont.numel(),
                   torch2mpitype(input_cont.scalar_type()), static_cast<int>(source),
                   static_cast<int>(tag), comm, &req));
 
-        auto ret = torch::empty({5},at::kDouble);
+        auto ret = torch::empty({7},at::kDouble);
         auto fortran_handle = MPI_Request_c2f(req);
         ret[0] = static_cast<double>(fortran_handle);
         ret[1] = static_cast<double>(Irecv_Op);
         ret[2] = static_cast<double>(source);
         ret[3] = static_cast<double>(tag);
         ret[4] = static_cast<double>(0xFFFFFFFF & std::hash<void*>()(input_cont.data_ptr()));
+        ret[5] = static_cast<double>(devhelper.devicetype);
+        ret[6] = static_cast<double>(devhelper.device.index());
         variable_list retlist;
         retlist.push_back(ret);
         retlist.push_back(input_cont); // We ensure that the buffer stays in scope and is not garbage collected
+        retlist.push_back(input.variable_data()); // We do this for symmetry reasons, but it is more ISend which needs this
         return retlist;
     })();
     if (grad_fn) {
@@ -1071,6 +1178,8 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
     auto sourcedest = static_cast<int64_t>(input[0][2].item<double>());
     auto tag = static_cast<int64_t>(input[0][3].item<double>());
     auto hashvalue = static_cast<uint32_t>(input[0][4].item<double>());
+    auto devicetype = static_cast<int16_t>(input[0][5].item<double>());
+    auto deviceindex = static_cast<int16_t>(input[0][6].item<double>());
 
     if (hashvalue != (0xFFFFFFFF & std::hash<void*>()(input[1].data_ptr()))) {
         std::ostringstream oss;
@@ -1091,8 +1200,16 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
 
         MPI_Status status; // TODO: Handle use cases for MPI_Status
         check_mpi_return_value(MPI_Wait(&req, & status));
+
+        if (operation == Isend_Op) {
+            // We do not do any device conversion for Isend, we then simply return the initial tensor
+            return input[2].variable_data();
+        }
+
+        MPIDeviceHelper devhelper(c10::Device((c10::DeviceType)devicetype, deviceindex));
+
         // return a shallow copy of the second input tensor without the autograd strings attached
-        return input[1].variable_data();
+        return devhelper.fromMPIToDevice(input[1]).variable_data();
     })();
     if (grad_fn) {
         set_history(torch::autograd::flatten_tensor_args(result), grad_fn);
@@ -1150,6 +1267,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     //
     // [1] https://github.com/open-mpi/ompi/issues/3705
     m.import("mpi4py.MPI");
+
+#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+    __setup_have_cuda_aware_mpi_support();
+#endif
+
+    m.def("deactivate_cuda_aware_mpi_support",&deactivate_cuda_aware_mpi_support);
 
     // Torchscript does not like the pybind11 enum_ solution
     //py::enum_<TorchmpiCollectiveOps>(m, "MPI_Op")
