@@ -72,3 +72,7 @@ class MPI_Communicator:
         return self._comm.Wait(handle)
 
 COMM_WORLD = MPI_Communicator(torch.ops.torchmpi.COMM_WORLD())
+
+def comm_from_mpi4py(comm):
+    fortran_handle = comm.py2f();
+    return MPI_Communicator(torch.ops.torchmpi.comm_from_fortran(fortran_handle))

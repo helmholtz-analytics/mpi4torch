@@ -165,6 +165,11 @@ c10::intrusive_ptr<MPI_Comm_Wrapper> comm_world()
     return c10::make_intrusive<MPI_Comm_Wrapper>(MPI_COMM_WORLD);
 }
 
+c10::intrusive_ptr<MPI_Comm_Wrapper> comm_from_fortran(int64_t fortran_handle)
+{
+    return c10::make_intrusive<MPI_Comm_Wrapper>(MPI_Comm_f2c(fortran_handle));
+}
+
 Tensor JoinDummies(const Tensor& loopthrough, const variable_list& list);
 
 int64_t MPI_Comm_Wrapper::GetRank()
@@ -1253,6 +1258,7 @@ static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torch
 // Old-style registration API until pytorch 1.4.0 is
 static auto registry = torch::RegisterOperators()
     .op("torchmpi::COMM_WORLD", &comm_world)
+    .op("torchmpi::comm_from_fortran", &comm_from_fortran)
     .op("torchmpi::JoinDummies", &JoinDummies);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
