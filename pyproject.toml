@@ -1,0 +1,12 @@
+[build-system]
+# PEP 517 and PEP 518 build requirements
+# cf. https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
+
+# we need torch as a build requirement, since we explicitly import it within setup.py
+requires = [
+    "torch>=1.5.0",
+    "setuptools>=40.8.0",
+    "wheel"
+]
+build-backend = "setuptools.build_meta:__legacy__"
+
