@@ -45,9 +45,12 @@ class MpiBuildExtension(BuildExtension):
 with open(os.path.join(os.path.dirname(__file__), 'README.md'), encoding='utf-8') as filehandle:
     long_description = filehandle.read()
 
+with open(os.path.join(os.path.dirname(__file__), 'version.txt'), encoding='utf-8') as filehandle:
+    versiontext = filehandle.read()
+
 setup(
     name='torchmpi',
-    version='0.0.1',
+    version=versiontext,
     description='AD-compatible implementation of several MPI functions for pytorch tensors',
     author='Philipp Knechtges',
     author_email='philipp.knechtges@dlr.de',
