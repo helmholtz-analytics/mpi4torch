@@ -53,6 +53,20 @@ setup(
     author_email='philipp.knechtges@dlr.de',
     long_description=long_description,
     long_description_content_type='text/markdown',
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: C++",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+        "Intended Audience :: Science/Research",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+    ],
     package_dir = {'torchmpi': 'src'},
     packages = ['torchmpi'],
     ext_modules=[
