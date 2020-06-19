@@ -2,6 +2,27 @@ import torch
 from ._mpi import *
 from typing import List
 
+__all__ = [
+    "MPI_MAX",
+    "MPI_MIN",
+    "MPI_SUM",
+    "MPI_PROD",
+    "MPI_LAND",
+    "MPI_BAND",
+    "MPI_LOR",
+    "MPI_BOR",
+    "MPI_LXOR",
+    "MPI_BXOR",
+    "MPI_MINLOC",
+    "MPI_MAXLOC",
+    "JoinDummies",
+    "JoinDummiesHandle",
+    "MPI_Communicator",
+    "COMM_WORLD",
+    "comm_from_mpi4py",
+    "deactivate_cuda_aware_mpi_support"
+]
+
 WaitHandle = List[torch.Tensor]
 
 @torch.jit.script
