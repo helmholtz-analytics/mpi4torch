@@ -1314,7 +1314,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     __setup_have_cuda_aware_mpi_support();
 #endif
 
-    m.def("deactivate_cuda_aware_mpi_support",&deactivate_cuda_aware_mpi_support);
+    m.def("deactivate_cuda_aware_mpi_support",&deactivate_cuda_aware_mpi_support,
+          "Deactivates the CUDA-aware MPI support.\n"
+          "\n"
+          "Calling this function forces torchmpi to first move any tensor into main memory before\n"
+          "calling a MPI function on it, and then to move the result back into device memory after\n"
+          "the MPI call has finished.\n"
+          "\n"
+          "Note\n"
+          "----\n"
+          "    This function is useful in situations in which MPI advertises CUDA-awareness but the\n"
+          "    functionality is not really supported by the backend.\n");
 
     // Torchscript does not like the pybind11 enum_ solution
     //py::enum_<TorchmpiCollectiveOps>(m, "MPI_Op")
