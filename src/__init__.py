@@ -16,6 +16,7 @@ __all__ = [
     "MPI_BXOR",
     "MPI_MINLOC",
     "MPI_MAXLOC",
+    "WaitHandle",
     "JoinDummies",
     "JoinDummiesHandle",
     "MPI_Communicator",
@@ -24,15 +25,24 @@ __all__ = [
     "deactivate_cuda_aware_mpi_support"
 ]
 
-WaitHandle = List[torch.Tensor]
+@torch.jit.script
+class WaitHandle:
+
+    def __init__(self, raw_handle: List[torch.Tensor]):
+        self._handle = raw_handle
+
+    @property
+    def dummy(self):
+        return self._handle[0]
 
 @torch.jit.script
 def JoinDummies(tensor: torch.Tensor, args:List[torch.Tensor]) -> torch.Tensor:
     return torch.ops.torchmpi.JoinDummies(tensor, args)
 
 @torch.jit.script
-def JoinDummiesHandle(handle: List[torch.Tensor], args:List[torch.Tensor]) -> List[torch.Tensor]:
-    return [ torch.ops.torchmpi.JoinDummies(handle[0], args), handle[1], handle[2] ]
+def JoinDummiesHandle(handle: WaitHandle, dummies:List[torch.Tensor]) -> WaitHandle:
+    raw_handle = handle._handle
+    return WaitHandle([ torch.ops.torchmpi.JoinDummies(raw_handle[0], dummies), raw_handle[1], raw_handle[2] ])
 
 @torch.jit.script
 class MPI_Communicator:
@@ -77,13 +87,13 @@ class MPI_Communicator:
         return self._comm.Alltoall(tensor, gatheraxis, scatteraxis, numelem)
 
     def Isend(self, tensor: torch.Tensor, dest: int, tag: int) -> WaitHandle:
-        return self._comm.Isend(tensor, dest, tag)
+        return WaitHandle(self._comm.Isend(tensor, dest, tag))
 
     def Irecv(self, tensor: torch.Tensor, source: int, tag: int) -> WaitHandle:
-        return self._comm.Irecv(tensor, source, tag)
+        return WaitHandle(self._comm.Irecv(tensor, source, tag))
 
     def Wait(self, waithandle: WaitHandle) -> torch.Tensor:
-        return self._comm.Wait(waithandle)
+        return self._comm.Wait(waithandle._handle)
 
     def Send(self, tensor: torch.Tensor, dest: int, tag: int) -> torch.Tensor:
         handle = self._comm.Isend(tensor, dest, tag)

@@ -69,17 +69,17 @@ to the file. However, in the backward step the information is missing that the `
 the `Isend` call and before the `Wait` call. `JoinDummies` helps here to encode this implicit dependency
 ```python
     handle = comm.Isend(sendbuffer,0,0)
-    res1 = comm.Recv(torchmpi.JoinDummies(recvbuffer,[handle[0]),0,0)
+    res1 = comm.Recv(torchmpi.JoinDummies(recvbuffer,[handle.dummy),0,0)
     res2 = comm.Wait(torchmpi.JoinDummiesHandle(handle,[res1]))
     res = some_other_function(torchmpi.JoinDummies(res1,[res2]))
 ```
 There are now two specialities when dealing with handles:
 
 - If the first argument of a `JoinDummies` function is a handle use `JoinDummiesHandle` instead.
-- If you want to pass a handle to the second argument of `JoinDummies` pass `handle[0]` instead.
+- If you want to pass a handle to the second argument of `JoinDummies` pass `handle.dummy` instead.
 
 The rationale for these rules is that for non-blocking communication in backward mode the receiving
-or sending buffer, which is stored in `handle[1]` or `grad(handle[1])`,
+or sending buffer, which is stored in `handle`,
 needs to stay in scope. Hence, any bifurcating usage of the second handle entry has to be avoided.
 
 To sum up:
