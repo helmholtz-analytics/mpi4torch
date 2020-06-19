@@ -1,13 +1,13 @@
-This is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
+torchmpi is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
 
-MPI stands for Message Passing Interface and is the de facto standard communication library on
-HPC computing resources. Hence to facilitate the usage of pytorch on these resources an MPI wrapper
+MPI stands for Message Passing Interface and is the de facto standard communication interface on
+high-performance computing resources. To facilitate the usage of pytorch on these resources an MPI wrapper
 that is transparent to pytorch's automatic differentiation (AD) engine is much in need. This library tries
 to bridge this gap.
 
 Note that this library is quite lowlevel and tries to stick as closely as possible to the MPI function
 names. If you need more convenience, please consult the [HeAT library](https://github.com/helmholtz-analytics/heat),
-which (hopefully soon) will use this library internally.
+which (hopefully soon) will internally use this library.
 
 **IMPORTANT** Before directly jumping right into action and starting to port your possibly existing MPI
 calls to this library, read the section below on the assumptions this library makes and the consequences
@@ -18,7 +18,7 @@ might still be subject to change.
 
 [[_TOC_]]
 
-# Install
+# Installation
 
 Make sure you have the development tools for MPI installed, either through some module system
 if you are working on a bigger cluster, or through the package repositories of your linux
@@ -91,50 +91,25 @@ To sum up:
 
 # Usage
 
-An easy and low-hanging fruit usage is to make your code data-parallel. E.g. consider the following example, which
-can be found in [examples/simple_linear_regression.py](examples/simple_linear_regression.py)
+An easy and low-hanging fruit usage is to make your code data-parallel. E.g. consider the following code snippet,
+which is an excerpt from the example in [examples/simple_linear_regression.py](examples/simple_linear_regression.py)
 
 ```python
-import torch
-import torchmpi
+   comm = torchmpi.COMM_WORLD
 
-comm = torchmpi.COMM_WORLD
+   def lossfunction(params):
+       # average initial params to bring all ranks on the same page
+       params = comm.Allreduce(params, torchmpi.MPI_SUM) / comm.size
 
-xinput = comm.rank + torch.rand([1000],dtype=torch.double)
+       # compute local loss
+       localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
 
-def some_parametrized_function(inp, params):
-    return (params[2] * inp + params[1]) * inp + params[0]
-
-gen_params = torch.tensor([0.1, 1.0, -2.0])
-
-youtput = some_parametrized_function(xinput, gen_params)
-
-def lossfunction(params):
-    # average initial params to bring all ranks on the same page
-    params = comm.Allreduce(params, torchmpi.MPI_SUM) / comm.size
-
-    # compute local loss
-    localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
-
-    # average loss among all ranks
-    return comm.Allreduce(localloss, torchmpi.MPI_SUM) / comm.size
-
-params = torch.arange(3, dtype=torch.double).requires_grad_()
-
-num_iterations = 1 # LBFGS only needs one iteration with so few parameters and a linear problem
-optimizer = torch.optim.LBFGS([params], 1)
-
-for i in range(num_iterations):
-    def closure():
-        loss = lossfunction(params)
-        optimizer.zero_grad()
-        loss.backward()
-        return loss
-    optimizer.step(closure)
-
-if comm.rank == 0:
-    print("Final parameters: ", params)
+       # sum up the loss among all ranks
+       return comm.Allreduce(localloss, torchmpi.MPI_SUM)
 ```
+
+Here we have parallelized a loss function simply by adding two calls to `Allreduce`. For a more thorough
+discussion of the example consult the documentation (TODO: add link to documentation).
 
 # Tests
 
