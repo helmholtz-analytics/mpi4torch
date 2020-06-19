@@ -16,7 +16,7 @@ it has for AD.
 **WARNING** The software is still in an early development phase. Especially the API
 might still be subject to change.
 
-[[_TOC_]]
+[Documentation is available here](https://stuff.knechtges.com/torchmpi/html)
 
 # Installation
 
@@ -109,7 +109,7 @@ which is an excerpt from the example in [examples/simple_linear_regression.py](e
 ```
 
 Here we have parallelized a loss function simply by adding two calls to `Allreduce`. For a more thorough
-discussion of the example consult the documentation (TODO: add link to documentation).
+discussion of the example consult the [documentation](https://stuff.knechtges.com/torchmpi/html/examples.html).
 
 # Tests
 
