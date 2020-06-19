@@ -1,5 +1,6 @@
 import torch
 from ._mpi import *
+from mpi4py import MPI as __mpi4py_MPI
 from typing import List
 
 __all__ = [
@@ -94,6 +95,6 @@ class MPI_Communicator:
 
 COMM_WORLD = MPI_Communicator(torch.ops.torchmpi.COMM_WORLD())
 
-def comm_from_mpi4py(comm):
+def comm_from_mpi4py(comm: __mpi4py_MPI.Comm) -> MPI_Communicator:
     fortran_handle = comm.py2f();
     return MPI_Communicator(torch.ops.torchmpi.comm_from_fortran(fortran_handle))
