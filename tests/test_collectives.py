@@ -118,6 +118,22 @@ class TestAlltoall(unittest.TestCase):
         res2 = comm.Alltoall(tmp,2,4,1)
         self.assertTrue((res2 == res1).all())
 
+    def test_gatherscatter_equivalence_varying_numelem(self):
+        tmp = torch.rand([3,4,comm.rank+1,4,comm.size*(comm.size+1)//2,2],dtype=torch.double)
+        res1 = comm.Scatter(comm.Gather(tmp,2,0),4,comm.rank+1,0)
+        res2 = comm.Alltoall(tmp,2,4,comm.rank+1)
+        self.assertTrue((res2 == res1).all())
+
+    def test_gatheraxis_scatteraxis_equal(self):
+        tmp = torch.rand([3,4,comm.rank+1,2],dtype=torch.double)
+        tmp[0,0,:,0] = torch.arange(comm.rank*(comm.rank+1)//2, (comm.rank+1)*(comm.rank+2)//2)
+        res = comm.Alltoall(tmp,2,2,comm.size-comm.rank)
+        total_numelem = comm.size*(comm.size+1)//2
+        correct_res = torch.arange(total_numelem - (comm.size-comm.rank)*(comm.size-comm.rank+1)//2,
+                                   total_numelem - (comm.size-comm.rank-1)*(comm.size-comm.rank)//2,
+                                   dtype=torch.double)
+        self.assertTrue((res[0,0,:,0] == correct_res).all())
+
     def test_identity_equivalence(self):
         tmp = torch.rand([3,4,2,4,3*comm.size,2],dtype=torch.double)
         res = comm.Alltoall(tmp,2,4,3)

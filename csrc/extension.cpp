@@ -932,8 +932,44 @@ Tensor MPI_Comm_Wrapper::MPIAlltoall(const Tensor& input, int64_t gatheraxis, in
         //       Memory usage could also become an issue, since this solution requires
         //       temporarily twice the memory that an Alltoallw solution would require.
         std::vector<torch::Tensor> scattered_tensors;
-        for(int64_t root = 0; root < GetSize(); ++root) {
-            scattered_tensors.emplace_back(MPIScatter(input_cont, scatteraxis, numelem, root));
+
+        if (gatheraxis != scatteraxis) {
+            // This is the easy case
+            for(int64_t root = 0; root < GetSize(); ++root) {
+                scattered_tensors.emplace_back(MPIScatter(input_cont, scatteraxis, numelem, root));
+            }
+        } else {
+            // if gather- and scatteraxis coincide we first need to figure out who receives how many
+            // elements from whom
+            //
+            // TODO: this could probably be solved more efficiently, with few more communication roundtrips
+
+            const size_t npes = (size_t)GetSize();
+            const size_t rank = (size_t)GetRank();
+            std::vector<int> numelem_cur(npes+1);
+            std::vector<int> numelem_new(npes+1);
+
+            const int tmp1 = input_cont.sizes()[(size_t)gatheraxis];
+            check_mpi_return_value(MPI_Allgather(&tmp1, 1, MPI_INT,
+                                                 &numelem_cur[1], 1,
+                                                 MPI_INT, comm));
+            const int tmp2 = numelem;
+            check_mpi_return_value(MPI_Allgather(&tmp2, 1, MPI_INT,
+                                                 &numelem_new[1], 1,
+                                                 MPI_INT, comm));
+            for (size_t i = 1; i < npes; ++i) {
+                numelem_cur[i+1] += numelem_cur[i];
+                numelem_new[i+1] += numelem_new[i];
+            }
+
+            for(int64_t root = 0; root < npes; ++root) {
+                int64_t localnumelem = std::min(numelem_new[rank+1],numelem_cur[root+1])
+                                         - std::max(numelem_new[rank],numelem_cur[root]);
+                if (localnumelem < 0) {
+                    localnumelem = 0;
+                }
+                scattered_tensors.emplace_back(MPIScatter(input_cont, scatteraxis, localnumelem, root));
+            }
         }
 
         return at::cat(scattered_tensors, gatheraxis);
