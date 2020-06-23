@@ -6,7 +6,7 @@ import os
 
 class MpiBuildExtension(BuildExtension):
     def __init__(self, *args,**kwargs):
-        super(MpiBuildExtension,self).__init__(*args,**kwargs)
+        super(MpiBuildExtension,self).__init__(*args,use_ninja=False,**kwargs)
 
     def build_extensions(self):
         """
