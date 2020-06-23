@@ -1,8 +1,8 @@
 import torch
-import torchmpi
+import mpi4torch
 import mpi4py.MPI
 
-comm = torchmpi.COMM_WORLD
+comm = mpi4torch.COMM_WORLD
 
 torch.manual_seed(42)
 
@@ -26,13 +26,13 @@ youtput = some_parametrized_function(xinput, gen_params)
 
 def lossfunction(params):
     # average initial params to bring all ranks on the same page
-    params = comm.Allreduce(params, torchmpi.MPI_SUM) / comm.size
+    params = comm.Allreduce(params, mpi4torch.MPI_SUM) / comm.size
 
     # compute local loss
     localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
 
     # sum up the loss among all ranks
-    return comm.Allreduce(localloss, torchmpi.MPI_SUM)
+    return comm.Allreduce(localloss, mpi4torch.MPI_SUM)
 
 params = torch.arange(3, dtype=torch.double).requires_grad_()
 

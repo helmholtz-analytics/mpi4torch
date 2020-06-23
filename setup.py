@@ -49,7 +49,7 @@ with open(os.path.join(os.path.dirname(__file__), 'version.txt'), encoding='utf-
     versiontext = filehandle.read()
 
 setup(
-    name='torchmpi',
+    name='mpi4torch',
     version=versiontext,
     description='AD-compatible implementation of several MPI functions for pytorch tensors',
     author='Philipp Knechtges',
@@ -70,11 +70,11 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Software Development :: Libraries :: Python Modules"
     ],
-    package_dir = {'torchmpi': 'src'},
-    packages = ['torchmpi'],
+    package_dir = {'mpi4torch': 'src'},
+    packages = ['mpi4torch'],
     ext_modules=[
         CppExtension(
-            name='torchmpi._mpi',
+            name='mpi4torch._mpi',
             sources=['csrc/extension.cpp'],
             extra_compile_args=['-g']),
     ],

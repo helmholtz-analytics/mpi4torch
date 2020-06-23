@@ -18,7 +18,7 @@ import sphinx_rtd_theme
 
 # -- Project information -----------------------------------------------------
 
-project = 'torchmpi'
+project = 'mpi4torch'
 copyright = '2020, Philipp Knechtges'
 author = 'Philipp Knechtges'
 

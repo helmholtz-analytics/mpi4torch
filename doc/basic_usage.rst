@@ -4,15 +4,15 @@ Basic Usage
 
 In the following we are going to discuss the different options and caveats that come with mixing MPI
 and pytorch's automatic differentiation (AD) functionality, and what consequences this has for using
-the torchmpi library.
+the mpi4torch library.
 
-Note that although we will within this document mostly talk about the interplay of torchmpi with pytorch's AD,
-this does not mean that torchmpi could not in principle be used as one might expect coming from other
+Note that although we will within this document mostly talk about the interplay of mpi4torch with pytorch's AD,
+this does not mean that mpi4torch could not in principle be used as one might expect coming from other
 MPI libraries. The main difference,
-however, is that if one plans to use torchmpi as a building block in some automatic differentiable code,
-the usage of torchmpi actually differs a lot to these "classical" programming paradigms.
+however, is that if one plans to use mpi4torch as a building block in some automatic differentiable code,
+the usage of mpi4torch actually differs a lot to these "classical" programming paradigms.
 It is thus *highly* recommended
-for everybody to read this document before, e.g., literally translating MPI calls to torchmpi. 
+for everybody to read this document before, e.g., literally translating MPI calls to mpi4torch. 
 
 How pytorch's AD works
 ======================
@@ -176,16 +176,16 @@ To sum up:
    The edges in the DAG representation can only be pytorch tensors of floating point type.
 
 
-.. _section_implications_torchmpi:
+.. _section_implications_mpi4torch:
 
-Implications for torchmpi
-=========================
+Implications for mpi4torch
+==========================
 
-torchmpi is a MPI wrapper library for pytorch tensors that tries to be as *transparent* as possible
+mpi4torch is a MPI wrapper library for pytorch tensors that tries to be as *transparent* as possible
 to pytorch's AD engine. By transparent we in particular mean that we do not touch the AD engine, but
 rather provide the MPI functions as nodes in the DAG that pytorch composes. To be more precise, one should
 say the DAGs that pytorch composes, which brings us already to one of the ramifications of this design
-decision: When parallelizing your program with torchmpi it is still the case that each MPI rank has its
+decision: When parallelizing your program with mpi4torch it is still the case that each MPI rank has its
 individual DAG that is run during the backward step. Most importantly, these DAGs do not know anything
 about each other, and thus cannot resolve any dependencies with ``requires_grad`` set from any other rank.
 As a consequence **it is the sole responsibility of the user to manage these dependencies**.
@@ -199,9 +199,9 @@ ranks are imagined to be arranged in a circle.
 .. code-block:: python
 
    import torch
-   import torchmpi
+   import mpi4torch
 
-   comm = torchmpi.COMM_WORLD
+   comm = mpi4torch.COMM_WORLD
 
    a = torch.tensor([1.0 + comm.rank]).requires_grad_()
 
@@ -320,20 +320,20 @@ that are implicit in the program code but that are missing in the DAG representa
    file. E.g. the ``Recv`` call has to happen after ``Isend``, and ``Wait`` has to happen after ``Recv``.
 
 **It is the users responsibility to encode these dependencies in the DAG!.**
-This brings us to the tools torchmpi provides to mitigate this situation.
+This brings us to the tools mpi4torch provides to mitigate this situation.
 
 The first one is a direct consequence of the discussion in the section on
 :ref:`pure functions <section_pure_functions>`: all DAG nodes need an input and an output.
-In our example above, this would e.g. concern the :py:meth:`torchmpi.MPI_Communicator.Wait`
-call. In principle, ``MPI_Wait`` does not return a floating point tensor. However, torchmpi
+In our example above, this would e.g. concern the :py:meth:`mpi4torch.MPI_Communicator.Wait`
+call. In principle, ``MPI_Wait`` does not return a floating point tensor. However, mpi4torch
 returns a floating-point tensor, giving the user the possibility to use it to encode
-any other dependencies on the ``Wait`` call. These tensors are named **dummies** in torchmpi.
+any other dependencies on the ``Wait`` call. These tensors are named **dummies** in mpi4torch.
 They do not convey any other information than that there is some (virtual/artificial)
 dependency to be encoded in the DAG.
 
 The dummies themselves are not really useful without a way to join them with the DAG. This is
-what the :py:func:`torchmpi.JoinDummies` function is actually for. The call signature of
-:py:func:`torchmpi.JoinDummies` is given by
+what the :py:func:`mpi4torch.JoinDummies` function is actually for. The call signature of
+:py:func:`mpi4torch.JoinDummies` is given by
 
 .. code-block:: python
 
@@ -347,27 +347,27 @@ However, pytorch does not know about this behaviour of the ``JoinDummies`` funct
 the result of the function to actually depend on the dummies. Consequently, pytorch will also
 respect this dependency in the backward DAG.
 
-The :py:func:`torchmpi.JoinDummies` function also has a sister function :py:func:`torchmpi.JoinDummiesHandle`, which
-is thought for situations in which the ``loopthrough`` variable is a :py:class:`torchmpi.WaitHandle`
-from a non-blocking MPI call, as e.g. returned by :py:func:`torchmpi.MPI_Communicator.Isend`. The signature
-of :py:func:`torchmpi.JoinDummiesHandle` is
+The :py:func:`mpi4torch.JoinDummies` function also has a sister function :py:func:`mpi4torch.JoinDummiesHandle`, which
+is thought for situations in which the ``loopthrough`` variable is a :py:class:`mpi4torch.WaitHandle`
+from a non-blocking MPI call, as e.g. returned by :py:func:`mpi4torch.MPI_Communicator.Isend`. The signature
+of :py:func:`mpi4torch.JoinDummiesHandle` is
 
 .. code-block:: python
 
    def JoinDummiesHandle(handle: WaitHandle, dummies: List[torch.Tensor]) -> WaitHandle
 
 Returning to the Isend-Recv-Wait example, we now want to put these tools to use. Starting with
-the call to :py:func:`torchmpi.MPI_Communicator.Recv`, we want this call to happen after
-:py:func:`torchmpi.MPI_Communicator.Isend`. Note that ``Isend`` returns a ``WaitHandle``, which
+the call to :py:func:`mpi4torch.MPI_Communicator.Recv`, we want this call to happen after
+:py:func:`mpi4torch.MPI_Communicator.Isend`. Note that ``Isend`` returns a ``WaitHandle``, which
 cannot directly be passed to ``JoinDummies``. For these situations we will use the 
-:py:attr:`torchmpi.WaitHandle.dummy` property, which gives us a means to convert a ``WaitHandle``
+:py:attr:`mpi4torch.WaitHandle.dummy` property, which gives us a means to convert a ``WaitHandle``
 to a dummy tensor. In the example from above this could then
 look like
 
 .. code-block:: python
 
    handle = comm.Isend(a,(comm.rank+1)%comm.size, 0)
-   recvbuffer = torchmpi.JoinDummies(torch.empty_like(a), [handle.dummy])
+   recvbuffer = mpi4torch.JoinDummies(torch.empty_like(a), [handle.dummy])
    #                                 ~~~~~~~~~~~~~~~~~~~
    #                                 This is what we
    #                                 originally wanted
@@ -379,22 +379,22 @@ look like
    b = comm.Recv(recvbuffer, (comm.rank-1+comm.size)%comm.size, 0)
 
 For the ``Wait`` we now also want this to happen after the ``Recv`` call. This time we make use of
-:py:func:`torchmpi.JoinDummiesHandle`.
+:py:func:`mpi4torch.JoinDummiesHandle`.
 
 .. code-block:: python
  
    b = comm.Recv(recvbuffer, (comm.rank-1+comm.size)%comm.size, 0)
-   wait_ret = comm.Wait(torchmpi.JoinDummiesHandle(handle,[b]))
+   wait_ret = comm.Wait(mpi4torch.JoinDummiesHandle(handle,[b]))
 
 Note that we already added a return variable for ``Wait``, since we still want to encode
 that our end result, the (implicit) sum of all ``res`` on all ranks, depends on the ``Isend`` to
-have finished. For that we introduce another call to :py:func:`torchmpi.JoinDummies`.
+have finished. For that we introduce another call to :py:func:`mpi4torch.JoinDummies`.
 
 .. code-block:: python
 
-   wait_ret = comm.Wait(torchmpi.JoinDummiesHandle(handle,[b]))
+   wait_ret = comm.Wait(mpi4torch.JoinDummiesHandle(handle,[b]))
 
-   res = torchmpi.JoinDummies(a+b, [wait_ret])
+   res = mpi4torch.JoinDummies(a+b, [wait_ret])
 
 
 The full code example now looks like
@@ -402,18 +402,18 @@ The full code example now looks like
 .. code-block:: python
 
    import torch
-   import torchmpi
+   import mpi4torch
 
-   comm = torchmpi.COMM_WORLD
+   comm = mpi4torch.COMM_WORLD
 
    a = torch.tensor([1.0 + comm.rank]).requires_grad_()
 
    handle = comm.Isend(a,(comm.rank+1)%comm.size, 0)
-   recvbuffer = torchmpi.JoinDummies(torch.empty_like(a), [handle.dummy])
+   recvbuffer = mpi4torch.JoinDummies(torch.empty_like(a), [handle.dummy])
    b = comm.Recv(recvbuffer, (comm.rank-1+comm.size)%comm.size, 0)
-   wait_ret = comm.Wait(torchmpi.JoinDummiesHandle(handle,[b]))
+   wait_ret = comm.Wait(mpi4torch.JoinDummiesHandle(handle,[b]))
 
-   res = torchmpi.JoinDummies(a+b, [wait_ret])
+   res = mpi4torch.JoinDummies(a+b, [wait_ret])
    print(res)
 
    res.backward()
@@ -458,7 +458,7 @@ back from ``res`` to ``a.grad``.
 
 .. warning::
 
-   In general, if you write a function that uses torchmpi internally and shall be automatic differentiable,
+   In general, if you write a function that uses mpi4torch internally and shall be automatic differentiable,
    make sure that all communication primitives are through one way or another part of a DAG path
    that connects input and output of that function.
 

@@ -1,8 +1,8 @@
 ************
-torchmpi
+mpi4torch
 ************
 
-torchmpi is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
+mpi4torch is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
 
 MPI stands for Message Passing Interface and is the de facto standard communication interface on
 high-performance computing resources. To facilitate the usage of pytorch on these resources an MPI wrapper

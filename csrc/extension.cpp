@@ -28,12 +28,12 @@ namespace
 #if defined(MPIX_CUDA_AWARE_SUPPORT)
 // if it is at compiletime already clear that OpenMPI has now support, we deactivate
 // the cuda-aware mpi support directly
-#define TORCHMPI_BUILT_WITH_CUDA_AWARENESS MPIX_CUDA_AWARE_SUPPORT
+#define MPI4TORCH_BUILT_WITH_CUDA_AWARENESS MPIX_CUDA_AWARE_SUPPORT
 #else
-#define TORCHMPI_BUILT_WITH_CUDA_AWARENESS 0
+#define MPI4TORCH_BUILT_WITH_CUDA_AWARENESS 0
 #endif
 
-#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+#if MPI4TORCH_BUILT_WITH_CUDA_AWARENESS
 
 bool have_cuda_aware_mpi_support = false;
 
@@ -53,7 +53,7 @@ const bool have_cuda_aware_mpi_support = false;
 
 void deactivate_cuda_aware_mpi_support()
 {
-#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+#if MPI4TORCH_BUILT_WITH_CUDA_AWARENESS
     have_cuda_aware_mpi_support = false;
 #endif
 }
@@ -201,54 +201,54 @@ struct MPIUnimplementedNode : MPIBackwardNode
     }
 };
 
-enum TorchmpiCollectiveOps : int64_t
+enum Mpi4torchCollectiveOps : int64_t
 {
-    torchmpi_op_max,
-    torchmpi_op_min,
-    torchmpi_op_sum,
-    torchmpi_op_prod,
-    torchmpi_op_land,
-    torchmpi_op_band,
-    torchmpi_op_lor,
-    torchmpi_op_bor,
-    torchmpi_op_lxor,
-    torchmpi_op_bxor,
-    torchmpi_op_minloc,
-    torchmpi_op_maxloc
+    mpi4torch_op_max,
+    mpi4torch_op_min,
+    mpi4torch_op_sum,
+    mpi4torch_op_prod,
+    mpi4torch_op_land,
+    mpi4torch_op_band,
+    mpi4torch_op_lor,
+    mpi4torch_op_bor,
+    mpi4torch_op_lxor,
+    mpi4torch_op_bxor,
+    mpi4torch_op_minloc,
+    mpi4torch_op_maxloc
 };
 
 MPI_Op __get_mpi_op(int64_t op)
 {
     switch(op)
     {
-    case torchmpi_op_max:
+    case mpi4torch_op_max:
         return MPI_MAX;
-    case torchmpi_op_min:
+    case mpi4torch_op_min:
         return MPI_MIN;
-    case torchmpi_op_sum:
+    case mpi4torch_op_sum:
         return MPI_SUM;
-    case torchmpi_op_prod:
+    case mpi4torch_op_prod:
         return MPI_PROD;
-    case torchmpi_op_land:
+    case mpi4torch_op_land:
         return MPI_LAND;
-    case torchmpi_op_band:
+    case mpi4torch_op_band:
         return MPI_BAND;
-    case torchmpi_op_lor:
+    case mpi4torch_op_lor:
         return MPI_LOR;
-    case torchmpi_op_bor:
+    case mpi4torch_op_bor:
         return MPI_BOR;
-    case torchmpi_op_lxor:
+    case mpi4torch_op_lxor:
         return MPI_LXOR;
-    case torchmpi_op_bxor:
+    case mpi4torch_op_bxor:
         return MPI_BXOR;
-    case torchmpi_op_minloc:
+    case mpi4torch_op_minloc:
         return MPI_MINLOC;
-    case torchmpi_op_maxloc:
+    case mpi4torch_op_maxloc:
         return MPI_MAXLOC;
     default:
         break;
     }
-    throw std::invalid_argument("torchmpi: Collective operation not supported!");
+    throw std::invalid_argument("mpi4torch: Collective operation not supported!");
 }
 
 struct MPIAllreduceSumBackward : public MPIBackwardNode {
@@ -266,7 +266,7 @@ variable_list MPIAllreduceSumBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = comm.MPIAllreduce(grads[0], torchmpi_op_sum);
+        grad_inputs[0] = comm.MPIAllreduce(grads[0], mpi4torch_op_sum);
     }
     return grad_inputs;
 }
@@ -276,7 +276,7 @@ Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input, int64_t op)
     std::shared_ptr<MPIBackwardNode> grad_fn;
     auto mpiop = __get_mpi_op(op);
     if (torch::autograd::compute_requires_grad(input)) {
-        if (op == torchmpi_op_sum) {
+        if (op == mpi4torch_op_sum) {
             grad_fn = std::shared_ptr<MPIAllreduceSumBackward> (new MPIAllreduceSumBackward(), torch::autograd::deleteNode);
         } else {
             grad_fn = std::shared_ptr<MPIUnimplementedNode>(new MPIUnimplementedNode(), torch::autograd::deleteNode);
@@ -325,7 +325,7 @@ variable_list MPIBcastInPlaceBackward::apply (variable_list&& grads)
 {
     variable_list grad_inputs(1);
     if (should_compute_output(0)) {
-        grad_inputs[0] = comm.MPIReduce_(grads[0],torchmpi_op_sum,root);
+        grad_inputs[0] = comm.MPIReduce_(grads[0],mpi4torch_op_sum,root);
     }
     return grad_inputs;
 }
@@ -408,7 +408,7 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t roo
     std::shared_ptr<MPIBackwardNode> grad_fn;
     auto mpiop = __get_mpi_op(op);
     if (torch::autograd::compute_requires_grad(input)) {
-        if (op == torchmpi_op_sum) {
+        if (op == mpi4torch_op_sum) {
             grad_fn = std::shared_ptr<MPIReduceSumInPlaceBackward> (new MPIReduceSumInPlaceBackward(static_cast<int>(root)),
                                                       torch::autograd::deleteNode);
         } else {
@@ -1189,7 +1189,7 @@ variable_list MPIWaitBackward::apply(variable_list&& grads)
         //       of the respective data_ptr aims at catching the same type of errors.
         if (next_node->name() != "MPINonBlockingBackward") {
             std::ostringstream oss;
-            oss << "torchmpi: Detected bifurcation in MPIWait handle usage. Next node in DAG"
+            oss << "mpi4torch: Detected bifurcation in MPIWait handle usage. Next node in DAG"
                    " should be MPINonBlockingBackward, but is "
                 << next_node->name() << "!";
             throw std::runtime_error(oss.str());
@@ -1224,7 +1224,7 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
 
     if (hashvalue != (0xFFFFFFFF & std::hash<void*>()(input[1].data_ptr()))) {
         std::ostringstream oss;
-        oss << "torchmpi: Detected bifurcation in MPIWait handle usage. "
+        oss << "mpi4torch: Detected bifurcation in MPIWait handle usage. "
                "Modifying or consuming the handle by other functions than functions from the "
                "MPIWait class is prohibited!";
         throw std::runtime_error(oss.str());
@@ -1261,7 +1261,7 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
 }
 
 // New-style API is more similar to pybind11, and will in the future be:
-static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torchmpi", "MPI_Comm_Wrapper")
+static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("mpi4torch", "MPI_Comm_Wrapper")
     .def("GetRank", &MPI_Comm_Wrapper::GetRank)
     .def("GetSize", &MPI_Comm_Wrapper::GetSize)
     .def("Allreduce", &MPI_Comm_Wrapper::MPIAllreduce)
@@ -1293,9 +1293,9 @@ static auto mpi_comm_wrapper_registry = torch::class_<::MPI_Comm_Wrapper>("torch
 
 // Old-style registration API until pytorch 1.4.0 is
 static auto registry = torch::RegisterOperators()
-    .op("torchmpi::COMM_WORLD", &comm_world)
-    .op("torchmpi::comm_from_fortran", &comm_from_fortran)
-    .op("torchmpi::JoinDummies", &JoinDummies);
+    .op("mpi4torch::COMM_WORLD", &comm_world)
+    .op("mpi4torch::comm_from_fortran", &comm_from_fortran)
+    .op("mpi4torch::JoinDummies", &JoinDummies);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // There are some issues with older versions of OpenMPI which have difficulties with dlopen-ing these
@@ -1310,14 +1310,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // [1] https://github.com/open-mpi/ompi/issues/3705
     m.import("mpi4py.MPI");
 
-#if TORCHMPI_BUILT_WITH_CUDA_AWARENESS
+#if MPI4TORCH_BUILT_WITH_CUDA_AWARENESS
     __setup_have_cuda_aware_mpi_support();
 #endif
 
     m.def("deactivate_cuda_aware_mpi_support",&deactivate_cuda_aware_mpi_support,
           "Deactivates the CUDA-aware MPI support.\n"
           "\n"
-          "Calling this function forces torchmpi to first move any tensor into main memory before\n"
+          "Calling this function forces mpi4torch to first move any tensor into main memory before\n"
           "calling a MPI function on it, and then to move the result back into device memory after\n"
           "the MPI call has finished.\n"
           "\n"
@@ -1327,24 +1327,24 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "    functionality is not really supported by the backend.\n");
 
     // Torchscript does not like the pybind11 enum_ solution
-    //py::enum_<TorchmpiCollectiveOps>(m, "MPI_Op")
-    //    .value("MPI_MAX", TorchmpiCollectiveOps::torchmpi_op_max)
-    //    .value("MPI_MIN", TorchmpiCollectiveOps::torchmpi_op_min)
-    //    .value("MPI_SUM", TorchmpiCollectiveOps::torchmpi_op_sum)
-    //    .value("MPI_PROD", TorchmpiCollectiveOps::torchmpi_op_prod)
+    //py::enum_<Mpi4torchCollectiveOps>(m, "MPI_Op")
+    //    .value("MPI_MAX", Mpi4torchCollectiveOps::mpi4torch_op_max)
+    //    .value("MPI_MIN", Mpi4torchCollectiveOps::mpi4torch_op_min)
+    //    .value("MPI_SUM", Mpi4torchCollectiveOps::mpi4torch_op_sum)
+    //    .value("MPI_PROD", Mpi4torchCollectiveOps::mpi4torch_op_prod)
     //    .export_values();
 
-    m.attr("MPI_MAX") = py::int_((int64_t)torchmpi_op_max);
-    m.attr("MPI_MIN") = py::int_((int64_t)torchmpi_op_min);
-    m.attr("MPI_SUM") = py::int_((int64_t)torchmpi_op_sum);
-    m.attr("MPI_PROD") = py::int_((int64_t)torchmpi_op_prod);
-    m.attr("MPI_LAND") = py::int_((int64_t)torchmpi_op_land);
-    m.attr("MPI_BAND") = py::int_((int64_t)torchmpi_op_band);
-    m.attr("MPI_LOR") = py::int_((int64_t)torchmpi_op_lor);
-    m.attr("MPI_BOR") = py::int_((int64_t)torchmpi_op_bor);
-    m.attr("MPI_LXOR") = py::int_((int64_t)torchmpi_op_lxor);
-    m.attr("MPI_BXOR") = py::int_((int64_t)torchmpi_op_bxor);
-    m.attr("MPI_MINLOC") = py::int_((int64_t)torchmpi_op_minloc);
-    m.attr("MPI_MAXLOC") = py::int_((int64_t)torchmpi_op_maxloc);
+    m.attr("MPI_MAX") = py::int_((int64_t)mpi4torch_op_max);
+    m.attr("MPI_MIN") = py::int_((int64_t)mpi4torch_op_min);
+    m.attr("MPI_SUM") = py::int_((int64_t)mpi4torch_op_sum);
+    m.attr("MPI_PROD") = py::int_((int64_t)mpi4torch_op_prod);
+    m.attr("MPI_LAND") = py::int_((int64_t)mpi4torch_op_land);
+    m.attr("MPI_BAND") = py::int_((int64_t)mpi4torch_op_band);
+    m.attr("MPI_LOR") = py::int_((int64_t)mpi4torch_op_lor);
+    m.attr("MPI_BOR") = py::int_((int64_t)mpi4torch_op_bor);
+    m.attr("MPI_LXOR") = py::int_((int64_t)mpi4torch_op_lxor);
+    m.attr("MPI_BXOR") = py::int_((int64_t)mpi4torch_op_bxor);
+    m.attr("MPI_MINLOC") = py::int_((int64_t)mpi4torch_op_minloc);
+    m.attr("MPI_MAXLOC") = py::int_((int64_t)mpi4torch_op_maxloc);
 }
 

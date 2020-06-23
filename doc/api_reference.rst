@@ -2,12 +2,12 @@
 API Reference
 ********************
 
-.. automodule:: torchmpi
+.. automodule:: mpi4torch
    :members:
    :undoc-members:
 
    .. autofunction:: JoinDummies(loopthrough: torch.Tensor, dummies:List[torch.Tensor]) -> torch.Tensor
-   .. autofunction:: JoinDummiesHandle(handle: torchmpi.WaitHandle, dummies:List[torch.Tensor]) -> torchmpi.WaitHandle
+   .. autofunction:: JoinDummiesHandle(handle: mpi4torch.WaitHandle, dummies:List[torch.Tensor]) -> mpi4torch.WaitHandle
    .. data:: MPI_MAX
    .. data:: MPI_MIN
    .. data:: MPI_SUM

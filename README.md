@@ -1,4 +1,4 @@
-torchmpi is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
+mpi4torch is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
 
 MPI stands for Message Passing Interface and is the de facto standard communication interface on
 high-performance computing resources. To facilitate the usage of pytorch on these resources an MPI wrapper
@@ -44,7 +44,7 @@ manually**. In other words, your code will not work magically with AD by just po
 
 To encode these dependencies, the library provides different measures. One of them is that every function, even
 functions like `Send`, have input and output tensors. Another very important tool in this library is the
-`torchmpi.JoinDummies` function:
+`mpi4torch.JoinDummies` function:
 ```
 def JoinDummies(tensor: torch.Tensor, args:List[torch.Tensor]) -> torch.Tensor:
 ```
@@ -69,9 +69,9 @@ to the file. However, in the backward step the information is missing that the `
 the `Isend` call and before the `Wait` call. `JoinDummies` helps here to encode this implicit dependency
 ```python
     handle = comm.Isend(sendbuffer,0,0)
-    res1 = comm.Recv(torchmpi.JoinDummies(recvbuffer,[handle.dummy),0,0)
-    res2 = comm.Wait(torchmpi.JoinDummiesHandle(handle,[res1]))
-    res = some_other_function(torchmpi.JoinDummies(res1,[res2]))
+    res1 = comm.Recv(mpi4torch.JoinDummies(recvbuffer,[handle.dummy),0,0)
+    res2 = comm.Wait(mpi4torch.JoinDummiesHandle(handle,[res1]))
+    res = some_other_function(mpi4torch.JoinDummies(res1,[res2]))
 ```
 There are now two specialities when dealing with handles:
 
@@ -95,17 +95,17 @@ An easy and low-hanging fruit usage is to make your code data-parallel. E.g. con
 which is an excerpt from the example in [examples/simple_linear_regression.py](examples/simple_linear_regression.py)
 
 ```python
-   comm = torchmpi.COMM_WORLD
+   comm = mpi4torch.COMM_WORLD
 
    def lossfunction(params):
        # average initial params to bring all ranks on the same page
-       params = comm.Allreduce(params, torchmpi.MPI_SUM) / comm.size
+       params = comm.Allreduce(params, mpi4torch.MPI_SUM) / comm.size
 
        # compute local loss
        localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
 
        # sum up the loss among all ranks
-       return comm.Allreduce(localloss, torchmpi.MPI_SUM)
+       return comm.Allreduce(localloss, mpi4torch.MPI_SUM)
 ```
 
 Here we have parallelized a loss function simply by adding two calls to `Allreduce`. For a more thorough

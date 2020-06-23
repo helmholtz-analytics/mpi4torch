@@ -19,22 +19,22 @@ loss function is just a summation of losses per data point. E.g. consider the fo
 
 This function is usually fed into an gradient-based optimizer to find the optimal parameters.
 We want to argue in the following that parallelizing this code in a data-parallel way is often as easy as
-adding two calls to  :py:meth:`torchmpi.MPI_Communicator.Allreduce`:
+adding two calls to  :py:meth:`mpi4torch.MPI_Communicator.Allreduce`:
 
 .. code-block:: python
    :emphasize-lines: 3,9
 
    def lossfunction(params):
        # average initial params to bring all ranks on the same page
-       params = comm.Allreduce(params, torchmpi.MPI_SUM) / comm.size
+       params = comm.Allreduce(params, mpi4torch.MPI_SUM) / comm.size
 
        # compute local loss
        localloss = torch.sum(torch.square(youtput - some_parametrized_function(xinput, params)))
 
        # sum up the loss among all ranks
-       return comm.Allreduce(localloss, torchmpi.MPI_SUM)
+       return comm.Allreduce(localloss, mpi4torch.MPI_SUM)
 
-:py:meth:`torchmpi.MPI_Communicator.Allreduce` is used once to compute the average of the incoming parameters
+:py:meth:`mpi4torch.MPI_Communicator.Allreduce` is used once to compute the average of the incoming parameters
 and once to collect the total loss.
 
 Embedded in a whole program this may look like (the code is also available in the git repository
@@ -44,11 +44,11 @@ in the examples folder):
    :linenos:
 
 Note that although the averaging in line 29 might seem superfluous at first --- since all ranks start
-off with the same initial set of parameters --- having the adjoint of :py:meth:`torchmpi.MPI_Communicator.Allreduce`
+off with the same initial set of parameters --- having the adjoint of :py:meth:`mpi4torch.MPI_Communicator.Allreduce`
 in the backward pass
 is essential for all instances of the LBFGS optimizer to perform the same update on all ranks.
 
-For the second call to :py:meth:`torchmpi.MPI_Communicator.Allreduce` in line 35 it is actually the other way
+For the second call to :py:meth:`mpi4torch.MPI_Communicator.Allreduce` in line 35 it is actually the other way
 around: Here the forward pass is crucial, but the backward pass merely adds up the ones coming from the
 different ranks, which (surprise) results in a vector of length 1 that just contains the communicator size.
 

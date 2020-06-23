@@ -35,7 +35,7 @@ class WaitHandle:
     @property
     def dummy(self):
         """A dummy variable that allows for the usage of the ``WaitHandle`` as one of the
-        second arguments of :py:func:`torchmpi.JoinDummies` and :py:func:`torchmpi.JoinDummiesHandle`.
+        second arguments of :py:func:`mpi4torch.JoinDummies` and :py:func:`mpi4torch.JoinDummiesHandle`.
         """
 
         return self._handle[0]
@@ -50,7 +50,7 @@ def JoinDummies(loopthrough: torch.Tensor, dummies:List[torch.Tensor]) -> torch.
     However, for the backward pass, the AD engine still considers the ``dummies`` as actual
     dependencies. The main use of this function is thus to manually encode dependencies
     that the AD engine does not see on its own. See also the introductory text in
-    the :ref:`section_implications_torchmpi` section on how to use this function.
+    the :ref:`section_implications_mpi4torch` section on how to use this function.
 
     Parameters
     ----------
@@ -65,34 +65,34 @@ def JoinDummies(loopthrough: torch.Tensor, dummies:List[torch.Tensor]) -> torch.
         Tensor that is a shallow copy of ``loopthrough``, but whose ``grad_fn``
         is ``JoinDummiesBackward``.
     """
-    return torch.ops.torchmpi.JoinDummies(loopthrough, dummies)
+    return torch.ops.mpi4torch.JoinDummies(loopthrough, dummies)
 
 @torch.jit.script
 def JoinDummiesHandle(handle: WaitHandle, dummies:List[torch.Tensor]) -> WaitHandle:
-    """This function has the same purpose as :py:func:`JoinDummies`, but accepts :py:class:`torchmpi.WaitHandle`
+    """This function has the same purpose as :py:func:`JoinDummies`, but accepts :py:class:`mpi4torch.WaitHandle`
     as its first argument.
 
     Parameters
     ----------
     handle:
-        :py:class:`torchmpi.WaitHandle` to pass through.
+        :py:class:`mpi4torch.WaitHandle` to pass through.
     dummies:
         List of tensors that are added as dummy dependencies to the DAG.
 
     Returns
     -------
-    :py:class:`torchmpi.WaitHandle`:
+    :py:class:`mpi4torch.WaitHandle`:
         A wait handle with the additional dummy dependenices added.
     """
     raw_handle = handle._handle
-    return WaitHandle([ torch.ops.torchmpi.JoinDummies(raw_handle[0], dummies), raw_handle[1], raw_handle[2] ])
+    return WaitHandle([ torch.ops.mpi4torch.JoinDummies(raw_handle[0], dummies), raw_handle[1], raw_handle[2] ])
 
 @torch.jit.script
 class MPI_Communicator:
     """MPI communicator wrapper class
     """
 
-    def __init__(self, comm: torch.classes.torchmpi.MPI_Comm_Wrapper):
+    def __init__(self, comm: torch.classes.mpi4torch.MPI_Comm_Wrapper):
         self._comm = comm
 
     @property
@@ -149,14 +149,14 @@ class MPI_Communicator:
         handle = self._comm.Irecv(tensor, source, tag)
         return self._comm.Wait(handle)
 
-COMM_WORLD = MPI_Communicator(torch.ops.torchmpi.COMM_WORLD())
+COMM_WORLD = MPI_Communicator(torch.ops.mpi4torch.COMM_WORLD())
 """
 World communicator ``MPI_COMM_WORLD``.
 """
 
 def comm_from_mpi4py(comm: __mpi4py_MPI.Comm) -> MPI_Communicator:
-    """Converts a ``mpi4py`` communicator to a :py:class:`torchmpi.MPI_Communicator`.
+    """Converts a ``mpi4py`` communicator to a :py:class:`mpi4torch.MPI_Communicator`.
     """
 
     fortran_handle = comm.py2f();
-    return MPI_Communicator(torch.ops.torchmpi.comm_from_fortran(fortran_handle))
+    return MPI_Communicator(torch.ops.mpi4torch.comm_from_fortran(fortran_handle))
