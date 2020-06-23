@@ -1,3 +1,16 @@
+import subprocess
+import sys
+
+
+def install_torch():
+    try:
+        from torch.utils.cpp_extension import CppExtension, BuildExtension
+    except ImportError:
+        print('torch is required to build from source.')
+        print('Installation:  python -m pip install torch')
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "torch"])
+
+install_torch()
 
 from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, BuildExtension
