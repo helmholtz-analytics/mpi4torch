@@ -90,6 +90,13 @@ def JoinDummiesHandle(handle: WaitHandle, dummies:List[torch.Tensor]) -> WaitHan
 @torch.jit.script
 class MPI_Communicator:
     """MPI communicator wrapper class
+
+    The only supported ways to construct an ``MPI_Communicator`` are currently either through :py:const:`mpi4torch.COMM_WORLD` or
+    :py:func:`mpi4torch.comm_from_mpi4py`.
+
+    Note
+    ----
+    All methods with an underscore suffix are in-place operations.
     """
 
     def __init__(self, comm: torch.classes.mpi4torch.MPI_Comm_Wrapper):
@@ -97,10 +104,16 @@ class MPI_Communicator:
 
     @property
     def rank(self) -> int:
+        """The rank or identification number of the local process with respect to this communicator.
+
+        The processes participating in a communicator are consecutively given ranks
+        in the interval [0, :py:attr:`mpi4torch.MPI_Communicator.size` - 1].
+        """
         return self._comm.GetRank()
 
     @property
     def size(self) -> int:
+        """The size of the MPI communicator, i.e. the number of processes involved."""
         return self._comm.GetSize()
 
     # This is currently not supported by torch.jit.script:
@@ -111,12 +124,90 @@ class MPI_Communicator:
     # So we need to write out every function by hand
 
     def Allreduce(self, tensor: torch.Tensor, op: int) -> torch.Tensor:
+        """Combines values from all processes and distributes the result back to all processes.
+
+        The combination operation is performed element-wise on the tensor.
+
+        This is the wrapper function of `MPI_Allreduce <https://www.open-mpi.org/doc/v4.1/man3/MPI_Allreduce.3.php>`_.
+
+        Parameters
+        ----------
+        tensor:
+            :py:class:`torch.Tensor` that shall be combined. It needs to have the same shape on all processes.
+        op:
+            Operation to combine the results. Only supported operations are :py:const:`mpi4torch.MPI_MAX`,
+            :py:const:`mpi4torch.MPI_MIN`, :py:const:`mpi4torch.MPI_SUM`, :py:const:`mpi4torch.MPI_PROD`, :py:const:`mpi4torch.MPI_LAND`,
+            :py:const:`mpi4torch.MPI_BAND`, :py:const:`mpi4torch.MPI_LOR`, :py:const:`mpi4torch.MPI_BOR`, :py:const:`mpi4torch.MPI_LXOR`,
+            :py:const:`mpi4torch.MPI_BXOR`, :py:const:`mpi4torch.MPI_MINLOC`,
+            :py:const:`mpi4torch.MPI_MAXLOC`
+
+        Returns
+        -------
+        :py:class:`torch.Tensor`:
+            Combined tensor of the same shape as the input `tensor`.
+
+        Note
+        ----
+        Only :py:const:`mpi4torch.MPI_SUM` is supported in the backwards pass at the moment.
+        """
         return self._comm.Allreduce(tensor, op)
 
     def Bcast_(self, tensor: torch.Tensor, root: int) -> torch.Tensor:
+        """Broadcasts a tensor from the `root` process to all other processes.
+
+        This is an in-place operation.
+
+        This is the wrapper function of `MPI_Bcast <https://www.open-mpi.org/doc/v4.1/man3/MPI_Bcast.3.php>`_.
+
+        Parameters
+        ----------
+        tensor:
+            :py:class:`torch.Tensor` that shall be broadcasted. The tensor needs to have the same shape on all processes,
+            since it is an in-place operation.
+        root:
+            The root process, whose tensor shall be broadcasted to the others.
+
+        Returns
+        -------
+        :py:class:`torch.Tensor`:
+            For `rank == root` this is the same as the input `tensor`. For all other processes this is the input `tensor` filled with the content
+            from the `root` process.
+        """
         return self._comm.Bcast_(tensor, root)
 
     def Reduce_(self, tensor: torch.Tensor, op: int, root: int) -> torch.Tensor:
+        """Reduces multiple tensors of the same shape, scattered over all processes, to a single tensor of the same shape stored on the `root` process.
+
+        The combination operation is performed element-wise on the tensor.
+
+        This is an in-place operation.
+
+        This is the wrapper function of `MPI_Reduce <https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php>`_.
+
+        Parameters
+        ----------
+        tensor:
+            :py:class:`torch.Tensor` that shall be reduced. The tensor needs to have the same shape on all processes,
+            since it is an element-wise operation.
+        op:
+            Operation to combine the results. Only supported operations are :py:const:`mpi4torch.MPI_MAX`,
+            :py:const:`mpi4torch.MPI_MIN`, :py:const:`mpi4torch.MPI_SUM`, :py:const:`mpi4torch.MPI_PROD`, :py:const:`mpi4torch.MPI_LAND`,
+            :py:const:`mpi4torch.MPI_BAND`, :py:const:`mpi4torch.MPI_LOR`, :py:const:`mpi4torch.MPI_BOR`, :py:const:`mpi4torch.MPI_LXOR`,
+            :py:const:`mpi4torch.MPI_BXOR`, :py:const:`mpi4torch.MPI_MINLOC`,
+            :py:const:`mpi4torch.MPI_MAXLOC`
+        root:
+            The root process, where the resulting tensor shall be gathered.
+
+        Returns
+        -------
+        :py:class:`torch.Tensor`:
+            For `rank == root` the result stores the reduced tensor. For all other processes the content of the resulting tensor is undefined,
+            with the exception that the result shall still suffice as input for the second argument of :py:func:`mpi4torch.JoinDummies`.
+
+        Note
+        ----
+        Only :py:const:`mpi4torch.MPI_SUM` is supported in the backwards pass at the moment.
+        """
         return self._comm.Reduce_(tensor, op, root)
 
     def Gather(self, tensor: torch.Tensor, gatheraxis: int, root: int) -> torch.Tensor:
