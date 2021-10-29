@@ -285,7 +285,7 @@ Tensor MPI_Comm_Wrapper::MPIAllreduce(const Tensor& input, int64_t op)
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -341,7 +341,7 @@ Tensor MPI_Comm_Wrapper::MPIBcast_(const Tensor& input, int64_t root)
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -418,7 +418,7 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t roo
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -504,7 +504,7 @@ Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int6
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -637,7 +637,7 @@ Tensor MPI_Comm_Wrapper::MPIAllgather(const Tensor& input, int64_t gatheraxis)
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -774,7 +774,7 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -920,7 +920,7 @@ Tensor MPI_Comm_Wrapper::MPIAlltoall(const Tensor& input, int64_t gatheraxis, in
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         // 1. Make input contiguous
         auto input_cont = input.contiguous();
@@ -1026,7 +1026,7 @@ Tensor JoinDummies(const Tensor& loopthrough, const variable_list& list)
         return loopthrough;
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         auto res = loopthrough.variable_data();
         return res;
@@ -1072,7 +1072,7 @@ variable_list MPI_Comm_Wrapper::MPIIsend(const Tensor& input, int64_t dest, int6
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -1116,7 +1116,7 @@ variable_list MPI_Comm_Wrapper::MPIIrecv(const Tensor& input, int64_t source, in
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPIDeviceHelper devhelper(input);
 
@@ -1237,7 +1237,7 @@ Tensor MPI_Comm_Wrapper::MPIWait(const variable_list& input)
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
     auto result = ([&]() {
-        at::AutoNonVariableTypeMode non_var_type_mode(true);
+        at::AutoDispatchBelowADInplaceOrView guard;
 
         MPI_Status status; // TODO: Handle use cases for MPI_Status
         check_mpi_return_value(MPI_Wait(&req, & status));
