@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: Ubuntu 20.04 CPython ${{ matrix.python }} ${{ matrix.mpi }}
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [ "3.7", "3.8", "3.9", "3.10" ]
+        mpi: [ "openmpi", "mpich" ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install CPython ${{ matrix.python }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: "${{ matrix.python }}"
+          architecture: x64
+      - name: Install MPI ${{ matrix.mpi }}
+        run: |
+          if [[ "${{ matrix.mpi }}" == "openmpi" ]]; then
+              sudo apt install libopenmpi-dev openmpi-bin
+          elif [[ "${{ matrix.mpi }}" == "mpich" ]]; then
+              sudo apt install mpich
+          else
+              exit 1
+          fi
+          mpirun --version
+      - name: Setup virtual environment
+        run: |
+          python -m venv venv
+      - name: Install mpi4torch
+        run: |
+          . venv/bin/activate
+          pip install . nose2
+      - name: Run Tests
+        run: |
+          . venv/bin/activate
+          #mpirun -np 2 python -c 'from mpi4torch import COMM_WORLD; print("Communicator size:", COMM_WORLD.size) if COMM_WORLD.rank == 0 else exit(0)'
+          mpirun -np 2 nose2
+
