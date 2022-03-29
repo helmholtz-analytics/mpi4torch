@@ -4,7 +4,7 @@
 
 # we need torch as a build requirement, since we explicitly import it within setup.py
 requires = [
-    "torch>=1.5.0",
+    "torch>=1.9.0",
     "setuptools>=40.8.0",
     "wheel"
 ]

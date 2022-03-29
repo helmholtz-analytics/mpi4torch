@@ -82,7 +82,7 @@ setup(
         'build_ext': MpiBuildExtension
     },
     install_requires=[
-        'torch>=1.5.0',
+        'torch>=1.9.0',
         'mpi4py'
     ]
 )
