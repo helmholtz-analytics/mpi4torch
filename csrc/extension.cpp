@@ -1297,18 +1297,99 @@ static auto registry = torch::RegisterOperators()
     .op("mpi4torch::comm_from_fortran", &comm_from_fortran)
     .op("mpi4torch::JoinDummies", &JoinDummies);
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    // There are some issues with older versions of OpenMPI which have difficulties with dlopen-ing these
-    // libraries the way it is done within pythons extension system (i.e. with RTLD_LOCAL). This leads to the fact
-    // that loading this extension leaves some relocations dangling (?), which then
-    // causes problems down the road once MPI_* functions are actually called.
-    // mpi4py has fixes for this, so we just circumvent this issue by importing mpi4py first.
-    // We could force the user to import mpi4py manually in his/her python application,
-    // but it is of course more convenient to do it here.
-    // Despite this we do not have any use for mpi4py in this extension.
+#if defined(OPEN_MPI)
+#if OMPI_MAJOR_VERSION < 3
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#endif
+#endif
+
+struct __MPI_Finalizer
+{
+    ~__MPI_Finalizer()
+    {
+        check_mpi_return_value(MPI_Finalize());
+    }
+};
+
+static std::unique_ptr<__MPI_Finalizer> __finalizer;
+
+static void __mpi4torch_mpi_init()
+{
+#if defined(OPEN_MPI)
+#if OMPI_MAJOR_VERSION < 3
+    // There are some issues with older versions of OpenMPI which have difficulties with dlopen-ing the MPI
+    // libraries the way it is done within pythons extension system (i.e. with RTLD_LOCAL) [1].
+    // In detail:
+    // - cpython loads this extension as a shared libarry with RTLD_LOCAL
+    // - this implies that several openmpi functions are not globally visible
+    // - during initalization openmpi itself dynamically loads shared objects,
+    //   which backreference to some of the previously loaded (but not visible) symbols
+    // - openmpi crashes during the MPI_Init* calls since these backreferenced symbols could
+    //   not be resolved
     //
     // [1] https://github.com/open-mpi/ompi/issues/3705
-    m.import("mpi4py.MPI");
+
+    // In principle we just want to reload libmpi with RTLD_GLOBAL specified before calling MPI_Init_thread
+    // to make the respective symbols visible.
+    // But we first need to find out by which path name the library goes we try to reload.
+
+    // To do so, we query for the address of a known symbol in libmpi, e.g. MPI_Init_thread
+    const void* mpi_init_thread_symbol = dlsym(RTLD_DEFAULT, "MPI_Init_thread");
+
+    if (mpi_init_thread_symbol == nullptr) {
+        // in principle we should never be able to reach this point, but better safe than sorry
+        throw std::runtime_error(std::string("mpi4torch failed with: ")+std::string(dlerror()));
+    }
+
+    // Now we query the library info in which the symbol resides
+    Dl_info dlinfo;
+    if (!dladdr(mpi_init_thread_symbol, &dlinfo)) {
+        throw std::runtime_error(std::string("mpi4torch failed with: ")+std::string(dlerror()));
+    }
+
+    // dlinfo.dli_fname should contain the pathname of the mpi library
+
+    // As the man page of dlopen suggests, to promote the already loaded symbols from RTLD_LOCAL to RTLD_GLOBAL,
+    // we just need to reopen the library with RTLD_NOLOAD | RTLD_GLOBAL flags.
+    const void* mpi_lib_handle = dlopen(dlinfo.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_GLOBAL);
+    if (!mpi_lib_handle) {
+        throw std::runtime_error(std::string("mpi4torch failed with: ")+std::string(dlerror()));
+    }
+#endif
+#endif
+
+    int mpi_initialized = -1;
+    check_mpi_return_value(MPI_Initialized(&mpi_initialized));
+    if (!mpi_initialized) {
+        int provided = 0;
+        // We play safe and initialize for multithreaded use cases
+        check_mpi_return_value(MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided));
+
+	// TODO: maybe in the future we actually may depend on multithreading,
+	//       so we leave this code here
+#if 0
+	if (provided != MPI_THREAD_MULTIPLE) {
+            std::cerr << "mpi4torch WARNING: MPI version does not provide full multithreading support!\n";
+            std::cerr << "mpi4torch WARNING: This may crash mpi4torch.\n";
+        }
+#endif
+        __finalizer = std::make_unique<__MPI_Finalizer>();
+    } else {
+#if 0
+        int provided = 0;
+	check_mpi_return_value(MPI_Query_thread(&provided));
+        if (provided != MPI_THREAD_MULTIPLE) {
+            std::cerr << "mpi4torch WARNING: MPI is already initialized but not with MPI_THREAD_MULTIPLE!\n";
+            std::cerr << "mpi4torch WARNING: This may crash mpi4torch.\n";
+        }
+#endif
+    }
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    // Initialize MPI
+    __mpi4torch_mpi_init();
 
 #if MPI4TORCH_BUILT_WITH_CUDA_AWARENESS
     __setup_have_cuda_aware_mpi_support();
