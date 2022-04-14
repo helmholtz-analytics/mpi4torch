@@ -6,13 +6,21 @@ on:
 
 jobs:
   tests:
-    name: Ubuntu 20.04 CPython ${{ matrix.python }} ${{ matrix.mpi }}
-    runs-on: ubuntu-20.04
+    name: ${{ matrix.os }} CPython ${{ matrix.python }} ${{ matrix.mpi }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ "ubuntu-18.04", "ubuntu-20.04" ]
         python: [ "3.7", "3.8", "3.9", "3.10" ]
         mpi: [ "openmpi", "mpich" ]
+        exclude:
+          - os: ubuntu-18.04
+            python: 3.8
+          - os: ubuntu-18.04
+            python: 3.9
+          - os: ubuntu-18.04
+            python: 3.10
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -38,9 +46,25 @@ jobs:
         run: |
           . venv/bin/activate
           pip install . nose2
-      - name: Run Tests
+      - name: Run Tests (np=2)
         run: |
           . venv/bin/activate
           #mpirun -np 2 python -c 'from mpi4torch import COMM_WORLD; print("Communicator size:", COMM_WORLD.size) if COMM_WORLD.rank == 0 else exit(0)'
           mpirun -np 2 nose2
+      - name: Run Tests (np=5)
+        run: |
+          . venv/bin/activate
+          if [[ "${{ matrix.mpi }}" == "openmpi" ]]; then
+              mpirun -np 5 --oversubscribe nose2
+          else
+              mpirun -np 5 nose2
+          fi
+      - name: Run Tests (np=7)
+        run: |
+          . venv/bin/activate
+          if [[ "${{ matrix.mpi }}" == "openmpi" ]]; then
+              mpirun -np 7 --oversubscribe nose2
+          else
+              mpirun -np 7 nose2
+          fi
 
