@@ -84,6 +84,5 @@ setup(
     },
     install_requires=[
         'torch>=1.9.0',
-        'mpi4py'
     ]
 )

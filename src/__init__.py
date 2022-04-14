@@ -1,6 +1,5 @@
 import torch
 from ._mpi import *
-from mpi4py import MPI as __mpi4py_MPI
 from typing import List
 
 __all__ = [
@@ -245,9 +244,18 @@ COMM_WORLD = MPI_Communicator(torch.ops.mpi4torch.COMM_WORLD())
 World communicator ``MPI_COMM_WORLD``.
 """
 
-def comm_from_mpi4py(comm: __mpi4py_MPI.Comm) -> MPI_Communicator:
-    """Converts a ``mpi4py`` communicator to a :py:class:`mpi4torch.MPI_Communicator`.
-    """
+try:
+    from  mpi4py import MPI as __mpi4py_MPI
 
-    fortran_handle = comm.py2f();
-    return MPI_Communicator(torch.ops.mpi4torch.comm_from_fortran(fortran_handle))
+    def comm_from_mpi4py(comm: __mpi4py_MPI.Comm) -> MPI_Communicator:
+        """Converts an ``mpi4py`` communicator to an :py:class:`mpi4torch.MPI_Communicator`.
+        """
+
+        fortran_handle = comm.py2f();
+        return MPI_Communicator(torch.ops.mpi4torch.comm_from_fortran(fortran_handle))
+except ModuleNotFoundError:
+    def comm_from_mpi4py(comm) -> MPI_Communicator:
+        """Converts an ``mpi4py`` communicator to an :py:class:`mpi4torch.MPI_Communicator`.
+        """
+
+        raise RuntimeError("mpi4py is not available!")
