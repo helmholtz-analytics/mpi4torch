@@ -1,3 +1,7 @@
+![mpi4torch Logo](./doc/_static/img/mpi4torch-logo-extrawhitespace.png)
+
+--------------------------------------------------------------------------------
+
 mpi4torch is an automatic-differentiable wrapper of MPI functions for the pytorch tensor library.
 
 MPI stands for Message Passing Interface and is the de facto standard communication interface on
