@@ -24,7 +24,7 @@ Once the dependencies have been satisfied the installation can be triggered by t
 
 # Usage
 
-It is **highly advised** to first read [the basic usage chapter of the documentation](https://stuff.knechtges.com/torchmpi/html/basic_usage.html)
+It is **highly advised** to first read [the basic usage chapter of the documentation](https://mpi4torch.readthedocs.io/en/latest/basic_usage.html)
 before jumping into action, since there are some implications of the pytorch AD design on the usage of mpi4torch.
 In other words, there are some footguns lurking!
 
@@ -46,7 +46,7 @@ which is an excerpt from [examples/simple_linear_regression.py](examples/simple_
 ```
 
 Here we have parallelized a loss function simply by adding two calls to `Allreduce`. For a more thorough
-discussion of the example see [here](https://stuff.knechtges.com/torchmpi/html/examples.html).
+discussion of the example see [here](https://mpi4torch.readthedocs.io/en/latest/examples.html#simple-data-parallel-example).
 
 # Tests
 
@@ -54,3 +54,8 @@ Running tests is as easy as
 ```
     mpirun -np 2 nose2
 ```
+
+# Project Status
+
+[![Tests](https://github.com/helmholtz-analytics/mpi4torch/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/helmholtz-analytics/mpi4torch/actions/workflows/test.yml)
+[![Documentation Status](https://readthedocs.org/projects/mpi4torch/badge/?version=latest)](https://mpi4torch.readthedocs.io/en/latest/?badge=latest)
