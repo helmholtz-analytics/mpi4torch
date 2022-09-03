@@ -1,8 +1,23 @@
 
 from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, BuildExtension
+import torch
 import copy
 import os
+import sys
+
+try:
+    # importlib only got added in cpython 3.8
+    if sys.version_info >= (3, 8):
+        from importlib import metadata as importlib_metadata
+    else:
+        # cf. pyproject.toml file, which makes pip install importlib-metadata if necessary
+        import importlib_metadata
+
+    torchversion = importlib_metadata.distribution("torch").version
+except:
+    # Fallback, but this should never happen.
+    torchversion = torch.__version__.split("+")[0]
 
 class MpiBuildExtension(BuildExtension):
     def __init__(self, *args,**kwargs):
@@ -83,6 +98,9 @@ setup(
         'build_ext': MpiBuildExtension
     },
     install_requires=[
-        'torch>=1.9.0',
+        # Pin the required pytorch version of the final binary wheels
+        # to the pytorch version used at build-time. This way we
+        # avoid possible ABI-incompatibilities.
+        'torch==' + torchversion,
     ]
 )
