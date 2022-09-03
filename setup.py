@@ -46,7 +46,7 @@ with open(os.path.join(os.path.dirname(__file__), 'README.md'), encoding='utf-8'
     long_description = filehandle.read()
 
 with open(os.path.join(os.path.dirname(__file__), 'version.txt'), encoding='utf-8') as filehandle:
-    versiontext = filehandle.read()
+    versiontext = filehandle.read().rstrip()
 
 setup(
     name='mpi4torch',
