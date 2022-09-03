@@ -45,7 +45,7 @@ jobs:
       - name: Install mpi4torch
         run: |
           . venv/bin/activate
-          pip install . nose2 mpi4py
+          pip install -v . nose2 mpi4py
       - name: Run Tests (np=2)
         run: |
           . venv/bin/activate
