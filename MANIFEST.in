@@ -1,2 +1,3 @@
 include version.txt
 include pyproject.toml
+include doc/_static/img/mpi4torch-logo-extrawhitespace.png
