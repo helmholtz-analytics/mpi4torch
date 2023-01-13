@@ -968,7 +968,7 @@ Tensor MPI_Comm_Wrapper::MPIAlltoall(const Tensor& input, int64_t gatheraxis, in
                 numelem_new[i+1] += numelem_new[i];
             }
 
-            for(int64_t root = 0; root < npes; ++root) {
+            for(int64_t root = 0; static_cast<size_t>(root) < npes; ++root) {
                 int64_t localnumelem = std::min(numelem_new[rank+1],numelem_cur[root+1])
                                          - std::max(numelem_new[rank],numelem_cur[root]);
                 if (localnumelem < 0) {
