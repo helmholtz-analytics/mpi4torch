@@ -4,7 +4,7 @@
 
 # we need torch as a build requirement, since we explicitly import it within setup.py
 requires = [
-    "torch>=1.9.0,<1.13.0",
+    "torch>=1.9.0",
     'importlib-metadata;python_version<"3.8"', #PEP 508-style dependency: Only install for cpython<3.8
     "setuptools>=40.8.0",
     "wheel"

@@ -464,8 +464,8 @@ Tensor MPI_Comm_Wrapper::MPIReduce_(const Tensor& input, int64_t op, int64_t roo
 }
 
 struct MPIGatherBackward : public MPIBackwardNode {
-    MPIGatherBackward(int64_t _gatheraxis, int64_t _root)
-        : gatheraxis(_gatheraxis), root(_root) {}
+    MPIGatherBackward(int64_t _gatheraxis, int64_t _root, int64_t _numelem)
+        : gatheraxis(_gatheraxis), root(_root), numelem(_numelem) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
         return std::string("MPIGatherBackward");
@@ -477,6 +477,7 @@ struct MPIGatherBackward : public MPIBackwardNode {
 
     int64_t gatheraxis;
     int64_t root;
+    int64_t numelem;
 };
 
 variable_list MPIGatherBackward::apply (variable_list&& grads)
@@ -484,9 +485,10 @@ variable_list MPIGatherBackward::apply (variable_list&& grads)
     variable_list grad_inputs(1);
     // TODO: for these simple functions the should_compute_output check is superfluous
     if (should_compute_output(0)) {
-        auto next_node = next_edge(0).function;
-        auto input_nr = next_edge(0).input_nr;
-        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        // pytorch/pytorch#79446 broke this code
+        //auto next_node = next_edge(0).function;
+        //auto input_nr = next_edge(0).input_nr;
+        //const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
         grad_inputs[0] = comm.MPIScatter(grads[0],gatheraxis, numelem, root);
     }
     return grad_inputs;
@@ -498,7 +500,7 @@ Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int6
     std::shared_ptr<MPIGatherBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIGatherBackward>
-            (new MPIGatherBackward(gatheraxis, root),
+            (new MPIGatherBackward(gatheraxis, root, input.sizes()[(size_t) gatheraxis]),
              torch::autograd::deleteNode);
         grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
@@ -597,7 +599,7 @@ Tensor MPI_Comm_Wrapper::MPIGather(const Tensor& input, int64_t gatheraxis, int6
 }
 
 struct MPIAllgatherBackward : public MPIBackwardNode {
-    MPIAllgatherBackward(int64_t _gatheraxis) : gatheraxis(_gatheraxis) {}
+    MPIAllgatherBackward(int64_t _gatheraxis, int64_t _numelem) : gatheraxis(_gatheraxis), numelem(_numelem) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
         return std::string("MPIAllgatherBackward");
@@ -608,6 +610,7 @@ struct MPIAllgatherBackward : public MPIBackwardNode {
     }
 
     int64_t gatheraxis;
+    int64_t numelem;
 };
 
 variable_list MPIAllgatherBackward::apply (variable_list&& grads)
@@ -615,9 +618,10 @@ variable_list MPIAllgatherBackward::apply (variable_list&& grads)
     variable_list grad_inputs(1);
     // TODO: for these simple functions the should_compute_output check is superfluous
     if (should_compute_output(0)) {
-        auto next_node = next_edge(0).function;
-        auto input_nr = next_edge(0).input_nr;
-        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        // pytorch/pytorch#79446 broke this code
+        //auto next_node = next_edge(0).function;
+        //auto input_nr = next_edge(0).input_nr;
+        //const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
         grad_inputs[0] = comm.MPIScatter(grads[0], gatheraxis, numelem, 0);
         for (int64_t root = 1; root < comm.GetSize(); ++root) {
             grad_inputs[0] += comm.MPIScatter(grads[0], gatheraxis, numelem, 1);
@@ -632,7 +636,7 @@ Tensor MPI_Comm_Wrapper::MPIAllgather(const Tensor& input, int64_t gatheraxis)
     std::shared_ptr<MPIAllgatherBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIAllgatherBackward>
-            (new MPIAllgatherBackward(gatheraxis), torch::autograd::deleteNode);
+            (new MPIAllgatherBackward(gatheraxis, input.sizes()[(size_t) gatheraxis]), torch::autograd::deleteNode);
         grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
     }
@@ -880,8 +884,8 @@ Tensor MPI_Comm_Wrapper::MPIScatter(const Tensor& input, int64_t scatteraxis, in
 }
 
 struct MPIAlltoallBackward : public MPIBackwardNode {
-    MPIAlltoallBackward(int64_t _gatheraxis, int64_t _scatteraxis)
-        : gatheraxis(_gatheraxis), scatteraxis(_scatteraxis) {}
+    MPIAlltoallBackward(int64_t _gatheraxis, int64_t _scatteraxis, int64_t _numelem)
+        : gatheraxis(_gatheraxis), scatteraxis(_scatteraxis), numelem(_numelem) {}
     variable_list apply(variable_list&& grads) override;
     std::string name() const override {
         return std::string("MPIAlltoallBackward");
@@ -893,6 +897,7 @@ struct MPIAlltoallBackward : public MPIBackwardNode {
 
     int64_t gatheraxis;
     int64_t scatteraxis;
+    int64_t numelem;
 };
 
 variable_list MPIAlltoallBackward::apply (variable_list&& grads)
@@ -900,9 +905,10 @@ variable_list MPIAlltoallBackward::apply (variable_list&& grads)
     variable_list grad_inputs(1);
     // TODO: for these simple functions the should_compute_output check is superfluous
     if (should_compute_output(0)) {
-        auto next_node = next_edge(0).function;
-        auto input_nr = next_edge(0).input_nr;
-        const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
+        // pytorch/pytorch#79446 broke this code
+        //auto next_node = next_edge(0).function;
+        //auto input_nr = next_edge(0).input_nr;
+        //const int64_t numelem = next_node->input_metadata(input_nr).shape()[(size_t) gatheraxis];
         grad_inputs[0] = comm.MPIAlltoall(grads[0], scatteraxis, gatheraxis, numelem);
     }
     return grad_inputs;
@@ -914,7 +920,7 @@ Tensor MPI_Comm_Wrapper::MPIAlltoall(const Tensor& input, int64_t gatheraxis, in
     std::shared_ptr<MPIAlltoallBackward> grad_fn;
     if (torch::autograd::compute_requires_grad(input)) {
         grad_fn = std::shared_ptr<MPIAlltoallBackward>
-            (new MPIAlltoallBackward(gatheraxis, scatteraxis),
+            (new MPIAlltoallBackward(gatheraxis, scatteraxis, input.sizes()[(size_t) gatheraxis]),
              torch::autograd::deleteNode);
         grad_fn->comm = *this;
         grad_fn->set_next_edges(torch::autograd::collect_next_edges(input));
