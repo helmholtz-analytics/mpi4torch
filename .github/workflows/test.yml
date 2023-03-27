@@ -14,9 +14,11 @@ jobs:
         #os: [ "ubuntu-20.04", "ubuntu-22.04" ]
         os: [ "ubuntu-20.04" ]
         python: [ "3.7", "3.8", "3.9", "3.10", "3.11" ]
-        pytorch: [ "1.9.1", "1.10.2", "1.11.0", "1.12.1", "1.13.1" ]
+        pytorch: [ "1.9.1", "1.10.2", "1.11.0", "1.12.1", "1.13.1", "2.0.0" ]
         mpi: [ "openmpi", "mpich" ]
         exclude:
+          - python: 3.7
+            pytorch: 2.0.0
           - python: 3.10
             pytorch: 1.8.1
           - python: 3.10
